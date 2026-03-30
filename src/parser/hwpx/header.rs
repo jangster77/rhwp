@@ -446,6 +446,11 @@ fn parse_para_shape(
                                 }
                             }
                         }
+                        b"switch" => {
+                            // <switch>/<case>/<default> 네임스페이스 분기 처리
+                            // HwpUnitChar case를 우선 적용, 없으면 default 사용
+                            parse_para_shape_switch(reader, &mut ps)?;
+                        }
                         _ => {}
                     }
                 }
@@ -463,6 +468,140 @@ fn parse_para_shape(
     }
 
     doc_info.para_shapes.push(ps);
+    Ok(())
+}
+
+/// `<switch>` 내부의 `<case>`/`<default>` 분기에서 margin, lineSpacing을 파싱.
+/// HwpUnitChar 네임스페이스 case를 우선 적용한다.
+fn parse_para_shape_switch(
+    reader: &mut Reader<&[u8]>,
+    ps: &mut ParaShape,
+) -> Result<(), HwpxError> {
+    let mut buf = Vec::new();
+    let mut in_hwpunitchar_case = false;
+    let mut in_default = false;
+    let mut found_case = false;
+    // default 값을 임시 저장 (case가 없을 때 폴백)
+    let mut def_margin_left: Option<i32> = None;
+    let mut def_margin_right: Option<i32> = None;
+    let mut def_indent: Option<i32> = None;
+    let mut def_prev: Option<i32> = None;
+    let mut def_next: Option<i32> = None;
+    let mut def_line_spacing_type: Option<LineSpacingType> = None;
+    let mut def_line_spacing: Option<i32> = None;
+
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(ref ce)) => {
+                let cname = ce.name(); let local = local_name(cname.as_ref());
+                match local {
+                    b"case" => {
+                        // required-namespace 속성 확인
+                        let is_hwpunitchar = ce.attributes().flatten().any(|attr| {
+                            let val = attr_str(&attr);
+                            val.contains("HwpUnitChar")
+                        });
+                        if is_hwpunitchar {
+                            in_hwpunitchar_case = true;
+                        }
+                    }
+                    b"default" => {
+                        in_default = true;
+                    }
+                    _ => {}
+                }
+            }
+            Ok(Event::Empty(ref ce)) => {
+                let cname = ce.name(); let local = local_name(cname.as_ref());
+                if in_hwpunitchar_case || in_default {
+                    match local {
+                        b"margin" | b"intent" | b"left" | b"right" | b"prev" | b"next" => {
+                            // margin 하위 요소들: <left value="..." />, <prev value="..." /> 등
+                            let tag_name = local;
+                            for attr in ce.attributes().flatten() {
+                                if attr.key.as_ref() == b"value" {
+                                    let val = parse_i32(&attr);
+                                    if in_hwpunitchar_case {
+                                        match tag_name {
+                                            b"left" => ps.margin_left = val,
+                                            b"right" => ps.margin_right = val,
+                                            b"intent" => ps.indent = val,
+                                            b"prev" => ps.spacing_before = val,
+                                            b"next" => ps.spacing_after = val,
+                                            _ => {}
+                                        }
+                                        found_case = true;
+                                    } else if in_default {
+                                        match tag_name {
+                                            b"left" => def_margin_left = Some(val),
+                                            b"right" => def_margin_right = Some(val),
+                                            b"intent" => def_indent = Some(val),
+                                            b"prev" => def_prev = Some(val),
+                                            b"next" => def_next = Some(val),
+                                            _ => {}
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        b"lineSpacing" => {
+                            let mut ls_type = None;
+                            let mut ls_val = None;
+                            for attr in ce.attributes().flatten() {
+                                match attr.key.as_ref() {
+                                    b"type" => {
+                                        ls_type = Some(match attr_str(&attr).as_str() {
+                                            "PERCENT" => LineSpacingType::Percent,
+                                            "FIXED" => LineSpacingType::Fixed,
+                                            "SPACEONLY" | "SPACE_ONLY" => LineSpacingType::SpaceOnly,
+                                            "MINIMUM" | "AT_LEAST" => LineSpacingType::Minimum,
+                                            _ => LineSpacingType::Percent,
+                                        });
+                                    }
+                                    b"value" => ls_val = Some(parse_i32(&attr)),
+                                    _ => {}
+                                }
+                            }
+                            if in_hwpunitchar_case {
+                                if let Some(t) = ls_type { ps.line_spacing_type = t; }
+                                if let Some(v) = ls_val { ps.line_spacing = v; }
+                                found_case = true;
+                            } else if in_default {
+                                def_line_spacing_type = ls_type;
+                                def_line_spacing = ls_val;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Ok(Event::End(ref ee)) => {
+                let ename = ee.name(); let local = local_name(ename.as_ref());
+                match local {
+                    b"case" => { in_hwpunitchar_case = false; }
+                    b"default" => { in_default = false; }
+                    b"switch" => break,
+                    _ => {}
+                }
+            }
+            Ok(Event::Eof) => break,
+            Err(e) => return Err(HwpxError::XmlError(format!("switch: {}", e))),
+            _ => {}
+        }
+        buf.clear();
+    }
+
+    // HwpUnitChar case가 없으면 default 값 적용
+    if !found_case {
+        if let Some(v) = def_margin_left { ps.margin_left = v; }
+        if let Some(v) = def_margin_right { ps.margin_right = v; }
+        if let Some(v) = def_indent { ps.indent = v; }
+        if let Some(v) = def_prev { ps.spacing_before = v; }
+        if let Some(v) = def_next { ps.spacing_after = v; }
+        if let Some(t) = def_line_spacing_type { ps.line_spacing_type = t; }
+        if let Some(v) = def_line_spacing { ps.line_spacing = v; }
+    }
+
     Ok(())
 }
 
