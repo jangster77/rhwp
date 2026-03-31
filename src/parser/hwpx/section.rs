@@ -279,17 +279,19 @@ fn parse_paragraph(
         .join("");
 
     // char_offsets 생성 (각 문자의 UTF-16 위치)
+    // HWP 바이너리에서 탭 문자는 확장 데이터 포함 8 code unit을 차지하므로
+    // LINE_SEG text_start와 올바르게 매핑되려면 탭도 8 code unit으로 계산
     let mut utf16_pos: u32 = 0;
     let ctrl_offset: u32 = (para.controls.len() as u32) * 8; // 각 컨트롤 = 8 UTF-16 유닛
     para.char_offsets = para.text.chars().map(|c| {
         let pos = utf16_pos + ctrl_offset;
-        utf16_pos += if (c as u32) > 0xFFFF { 2 } else { 1 };
+        utf16_pos += if c == '\t' { 8 } else if (c as u32) > 0xFFFF { 2 } else { 1 };
         pos
     }).collect();
 
     // char_count 설정 (텍스트 + 컨트롤 + 끝 마커)
     let text_utf16_len: u32 = para.text.chars()
-        .map(|c| if (c as u32) > 0xFFFF { 2u32 } else { 1 })
+        .map(|c| if c == '\t' { 8u32 } else if (c as u32) > 0xFFFF { 2 } else { 1 })
         .sum();
     para.char_count = text_utf16_len + ctrl_offset + 1; // +1 for 끝 마커
     para.has_para_text = !para.text.is_empty() || !para.controls.is_empty();
@@ -2668,10 +2670,11 @@ fn parse_equation(
 // ─── 유틸리티 (section 전용) ───
 
 /// 텍스트 파트들의 UTF-16 길이 합산
+/// 탭 문자는 HWP 바이너리와 동일하게 8 code unit으로 계산
 fn calc_utf16_len_from_parts(parts: &[String]) -> u32 {
     parts.iter()
         .flat_map(|s| s.chars())
-        .map(|c| if (c as u32) > 0xFFFF { 2u32 } else { 1 })
+        .map(|c| if c == '\t' { 8u32 } else if (c as u32) > 0xFFFF { 2 } else { 1 })
         .sum()
 }
 
