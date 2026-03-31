@@ -307,46 +307,103 @@ fn compose_lines(para: &Paragraph) -> Vec<ComposedLine> {
         // 이 줄의 텍스트 추출
         let line_text: String = para.text.chars().skip(text_start).take(text_end - text_start).collect();
 
-        // 강제 줄 바꿈(\n) 감지 및 제거
-        let has_line_break = line_text.ends_with('\n');
-        let line_text = if has_line_break {
-            line_text.trim_end_matches('\n').to_string()
-        } else {
-            line_text
-        };
-
-        // 이 줄 범위에 해당하는 CharShapeRef로 TextRun 분할
-        let runs = split_by_char_shapes(
-            &line_text,
-            text_start,
-            text_end,
-            &para.char_offsets,
-            &para.char_shapes,
-        );
-
-        // TAC 표 문단: lh에 표 높이가 포함된 텍스트 줄은 th로 보정 (Task #19)
-        // 표 높이는 layout의 표 렌더링에서 별도 처리됨
+        // TAC 표 문단 감지
         let has_tac = para.controls.iter().any(|c|
             matches!(c, crate::model::control::Control::Table(t) if t.common.treat_as_char));
-        let corrected_lh = if has_tac
-            && line_seg.text_height > 0
-            && line_seg.text_height < line_seg.line_height / 3
-        {
-            line_seg.text_height
-        } else {
-            line_seg.line_height
-        };
 
-        lines.push(ComposedLine {
-            runs,
-            line_height: corrected_lh,
-            baseline_distance: line_seg.baseline_distance,
-            segment_width: line_seg.segment_width,
-            column_start: line_seg.column_start,
-            line_spacing: line_seg.line_spacing,
-            has_line_break,
-            char_start: text_start,
-        });
+        // 강제 줄넘김(\n) + TAC 표 문단 처리 (Task #19/Task #20)
+        let newline_pos = line_text.find('\n');
+        if has_tac && newline_pos.is_some() {
+            let nl_pos = newline_pos.unwrap();
+            let pre_text: String = line_text.chars().take(nl_pos).collect();
+            let pre_end = text_start + nl_pos;
+
+            if !pre_text.is_empty() && !lines.is_empty() {
+                // \n 앞 텍스트를 이전 ComposedLine에 합침 (한컴 방식: \n 전 전체가 한 줄)
+                let prev: &mut ComposedLine = lines.last_mut().unwrap();
+                let mut extra_runs = split_by_char_shapes(
+                    &pre_text, text_start, pre_end,
+                    &para.char_offsets, &para.char_shapes,
+                );
+                prev.runs.append(&mut extra_runs);
+                prev.has_line_break = true;
+            } else if !pre_text.is_empty() {
+                // 이전 줄이 없으면 새 ComposedLine 생성
+                let pre_runs = split_by_char_shapes(
+                    &pre_text, text_start, pre_end,
+                    &para.char_offsets, &para.char_shapes,
+                );
+                let pre_lh = if line_seg.text_height > 0
+                    && line_seg.text_height < line_seg.line_height / 3 {
+                    line_seg.text_height
+                } else {
+                    line_seg.line_height
+                };
+                lines.push(ComposedLine {
+                    runs: pre_runs,
+                    line_height: pre_lh,
+                    baseline_distance: line_seg.baseline_distance,
+                    segment_width: line_seg.segment_width,
+                    column_start: line_seg.column_start,
+                    line_spacing: line_seg.line_spacing,
+                    has_line_break: true,
+                    char_start: text_start,
+                });
+            }
+
+            // \n 이후: 표 줄 (빈 runs, 표는 layout에서 별도 처리)
+            let post_start = text_start + nl_pos + 1;
+            let post_text: String = line_text.chars().skip(nl_pos + 1).collect();
+            let post_text_clean = post_text.trim_end_matches('\n').to_string();
+            let post_runs = split_by_char_shapes(
+                &post_text_clean, post_start, text_end,
+                &para.char_offsets, &para.char_shapes,
+            );
+            lines.push(ComposedLine {
+                runs: post_runs,
+                line_height: line_seg.line_height,
+                baseline_distance: line_seg.baseline_distance,
+                segment_width: line_seg.segment_width,
+                column_start: line_seg.column_start,
+                line_spacing: line_seg.line_spacing,
+                has_line_break: post_text.ends_with('\n'),
+                char_start: post_start,
+            });
+        } else {
+            // 일반 처리: 강제 줄넘김 없거나 끝에만 있는 경우
+            let has_line_break = line_text.ends_with('\n');
+            let line_text = if has_line_break {
+                line_text.trim_end_matches('\n').to_string()
+            } else {
+                line_text
+            };
+
+            let runs = split_by_char_shapes(
+                &line_text, text_start, text_end,
+                &para.char_offsets, &para.char_shapes,
+            );
+
+            // TAC 표 문단: lh에 표 높이가 포함된 텍스트 줄은 th로 보정 (Task #19)
+            let corrected_lh = if has_tac
+                && line_seg.text_height > 0
+                && line_seg.text_height < line_seg.line_height / 3
+            {
+                line_seg.text_height
+            } else {
+                line_seg.line_height
+            };
+
+            lines.push(ComposedLine {
+                runs,
+                line_height: corrected_lh,
+                baseline_distance: line_seg.baseline_distance,
+                segment_width: line_seg.segment_width,
+                column_start: line_seg.column_start,
+                line_spacing: line_seg.line_spacing,
+                has_line_break,
+                char_start: text_start,
+            });
+        }
     }
 
     lines
