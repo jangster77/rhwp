@@ -313,44 +313,14 @@ fn export_pdf(args: &[String]) {
     #[cfg(not(target_arch = "wasm32"))]
     {
         use rhwp::renderer::pdf;
-        if svg_pages.len() == 1 {
-            match pdf::svg_to_pdf(&svg_pages[0]) {
-                Ok(pdf_bytes) => {
-                    match fs::write(&output_file, &pdf_bytes) {
-                        Ok(_) => println!("  → {} ({}KB)", output_file, pdf_bytes.len() / 1024),
-                        Err(e) => eprintln!("오류: PDF 저장 실패 - {}", e),
-                    }
+        match pdf::svgs_to_pdf(&svg_pages) {
+            Ok(pdf_bytes) => {
+                match fs::write(&output_file, &pdf_bytes) {
+                    Ok(_) => println!("  → {} ({}KB, {}페이지)", output_file, pdf_bytes.len() / 1024, svg_pages.len()),
+                    Err(e) => eprintln!("오류: PDF 저장 실패 - {}", e),
                 }
-                Err(e) => eprintln!("오류: PDF 변환 실패 - {}", e),
             }
-        } else {
-            // 다중 페이지: 개별 PDF 생성 (향후 병합 구현)
-            match pdf::svgs_to_pdfs(&svg_pages) {
-                Ok(pdfs) => {
-                    if pdfs.len() == 1 {
-                        match fs::write(&output_file, &pdfs[0]) {
-                            Ok(_) => println!("  → {} ({}KB)", output_file, pdfs[0].len() / 1024),
-                            Err(e) => eprintln!("오류: PDF 저장 실패 - {}", e),
-                        }
-                    } else {
-                        // 페이지별 파일 저장
-                        let stem = Path::new(&output_file)
-                            .file_stem()
-                            .and_then(|s| s.to_str())
-                            .unwrap_or("page");
-                        let dir = Path::new(&output_file).parent().unwrap_or(Path::new("output"));
-                        for (i, pdf_bytes) in pdfs.iter().enumerate() {
-                            let fname = format!("{}_{:03}.pdf", stem, pages[i] + 1);
-                            let path = dir.join(&fname);
-                            match fs::write(&path, pdf_bytes) {
-                                Ok(_) => println!("  → {} ({}KB)", path.display(), pdf_bytes.len() / 1024),
-                                Err(e) => eprintln!("오류: PDF 저장 실패 - {}", e),
-                            }
-                        }
-                    }
-                }
-                Err(e) => eprintln!("오류: PDF 변환 실패 - {}", e),
-            }
+            Err(e) => eprintln!("오류: PDF 변환 실패 - {}", e),
         }
     }
 
