@@ -6,11 +6,11 @@
   align-items: center;
   gap: 0;
   padding: 0 8px;
-  background: #f5f5f5;
+  background: var(--color-bg-light);
   border-bottom: 1px solid #d0d0d0;
   flex-shrink: 0;
   height: 28px;
-  font-size: 13px;
+  font-size: var(--font-size-md);
 }
 
 .menu-item {
@@ -22,7 +22,7 @@
   display: inline-block;
   padding: 4px 14px;
   cursor: pointer;
-  color: #333;
+  color: var(--color-text);
   line-height: 20px;
   border: 1px solid transparent;
 }
@@ -30,7 +30,7 @@
 .menu-title:hover {
   background: #e2e6f1;
   border-color: #96a6cd;
-  color: #335095;
+  color: var(--color-primary-dark);
 }
 
 .menu-item.open > .menu-title {
@@ -48,9 +48,9 @@
   top: 100%;
   left: 0;
   min-width: 220px;
-  background: #fff;
+  background: var(--color-surface);
   border: 1px solid #c8c8c8;
-  box-shadow: 2px 2px 8px rgba(0,0,0,0.15);
+  box-shadow: var(--shadow-dropdown);
   z-index: 1000;
   padding: 4px 0;
 }
@@ -65,8 +65,8 @@
   align-items: center;
   padding: 5px 16px 5px 32px;
   cursor: pointer;
-  font-size: 12px;
-  color: #333;
+  font-size: var(--font-size-base);
+  color: var(--color-text);
   white-space: nowrap;
   line-height: 16px;
   position: relative;
@@ -94,31 +94,31 @@
 .md-icon.icon-para-mark::before {
   width: 16px;
   height: 16px;
-  font-size: 12px;
+  font-size: var(--font-size-base);
   line-height: 16px;
 }
 
 .md-item:hover {
   background: #e9eefb;
-  color: #335095;
+  color: var(--color-primary-dark);
 }
 
 .md-item.disabled {
-  color: #aaa;
+  color: var(--color-text-disabled);
   cursor: default;
 }
 
 .md-item.disabled:hover {
   background: transparent;
-  color: #aaa;
+  color: var(--color-text-disabled);
 }
 
 /* 단축키 */
 .md-shortcut {
   margin-left: auto;
   padding-left: 28px;
-  color: #888;
-  font-size: 11px;
+  color: var(--color-text-hint);
+  font-size: var(--font-size-sm);
 }
 
 .md-item.disabled .md-shortcut {
@@ -139,8 +139,8 @@
   align-items: center;
   padding: 5px 16px 5px 32px;
   cursor: pointer;
-  font-size: 12px;
-  color: #333;
+  font-size: var(--font-size-base);
+  color: var(--color-text);
   white-space: nowrap;
   line-height: 16px;
 }
@@ -155,24 +155,24 @@
 
 .md-sub:hover {
   background: #e9eefb;
-  color: #335095;
+  color: var(--color-primary-dark);
 }
 
 .md-sub.disabled {
-  color: #aaa;
+  color: var(--color-text-disabled);
   cursor: default;
 }
 
 .md-sub.disabled:hover {
   background: transparent;
-  color: #aaa;
+  color: var(--color-text-disabled);
 }
 
 .md-arrow {
   margin-left: auto;
   padding-left: 16px;
   font-size: 8px;
-  color: #999;
+  color: var(--color-text-placeholder);
 }
 
 .md-sub.disabled .md-arrow {
@@ -186,9 +186,9 @@
   left: 100%;
   top: -4px;
   min-width: 150px;
-  background: #fff;
+  background: var(--color-surface);
   border: 1px solid #c8c8c8;
-  box-shadow: 2px 2px 8px rgba(0,0,0,0.15);
+  box-shadow: var(--shadow-dropdown);
   padding: 4px 0;
   z-index: 1001;
 }

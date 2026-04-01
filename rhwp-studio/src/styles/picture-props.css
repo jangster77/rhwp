@@ -15,23 +15,23 @@
 .pp-wrap-btn {
   width: 32px;
   height: 28px;
-  border: 1px solid #c0c0c0;
-  border-radius: 2px;
-  background: #fff;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   padding: 0;
 }
 .pp-wrap-btn:hover:not(:disabled) {
-  background: #e7eaf4;
+  background: var(--color-accent-bg);
   border-color: #a0b0d8;
 }
 .pp-wrap-btn.active {
   background: #dde3f4;
-  border-color: #6182d6;
+  border-color: var(--color-primary);
   box-shadow: inset 0 0 0 1px #6182d6;
 }
 .pp-wrap-btn:disabled {
@@ -40,7 +40,7 @@
 }
 .pp-desc-btn {
   margin-left: auto;
-  font-size: 11px;
+  font-size: var(--font-size-sm);
   padding: 0 8px;
   height: 22px;
 }
@@ -48,8 +48,8 @@
   min-width: 56px;
 }
 .pp-stub-msg {
-  color: #999;
-  font-size: 11px;
+  color: var(--color-text-placeholder);
+  font-size: var(--font-size-sm);
   padding: 40px 20px;
   text-align: center;
 }
@@ -59,9 +59,9 @@
   display: inline-block;
   width: 44px;
   height: 44px;
-  border: 1px solid #c0c0c0;
+  border: 1px solid var(--color-border);
   border-radius: 50%;
-  background: #f5f5f5;
+  background: var(--color-bg-light);
   position: relative;
   margin-left: 12px;
   vertical-align: middle;
@@ -72,7 +72,7 @@
   left: 50%;
   width: 16px;
   height: 2px;
-  background: #6182d6;
+  background: var(--color-primary);
   transform-origin: left center;
   transform: translateY(-50%);
 }
@@ -88,8 +88,8 @@
 .pp-sync-arrow-btn {
   width: 18px;
   height: 12px;
-  border: 1px solid #c0c0c0;
-  background: #f5f5f5;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-light);
   cursor: pointer;
   font-size: 7px;
   line-height: 1;
@@ -131,7 +131,7 @@
 .pp-caption-btn {
   width: 52px;
   height: 44px;
-  font-size: 10px;
+  font-size: var(--font-size-xs);
   white-space: pre;
   line-height: 1.2;
 }
@@ -140,7 +140,7 @@
 .pp-corner-btn {
   width: 44px;
   height: 36px;
-  font-size: 16px;
+  font-size: var(--font-size-xl);
 }
 
 /* ── 채우기 서브 영역 ── */
@@ -162,21 +162,21 @@
 .pp-grad-dir-btn {
   width: 28px;
   height: 28px;
-  font-size: 14px;
+  font-size: var(--font-size-lg);
 }
 
 /* ── 세로 정렬 아이콘 ── */
 .pp-valign-btn {
   width: 36px;
   height: 30px;
-  font-size: 14px;
+  font-size: var(--font-size-lg);
 }
 
 /* ── 영문 눕힘/세움 ── */
 .pp-eng-btn {
   width: 52px;
   height: 48px;
-  font-size: 10px;
+  font-size: var(--font-size-xs);
   white-space: pre;
   line-height: 1.2;
   margin-right: 6px;
@@ -193,7 +193,7 @@
 .pp-shadow-type-btn {
   width: 44px;
   height: 40px;
-  font-size: 16px;
+  font-size: var(--font-size-xl);
 }
 
 /* ── 8방향 버튼 3×3 ── */
@@ -208,7 +208,7 @@
 .pp-dir-btn {
   width: 28px;
   height: 28px;
-  font-size: 14px;
+  font-size: var(--font-size-lg);
 }
 .pp-dir-spacer {
   width: 28px;
@@ -217,7 +217,7 @@
   align-items: center;
   justify-content: center;
   color: #ccc;
-  font-size: 12px;
+  font-size: var(--font-size-base);
 }
 
 /* ── 개체 설명문 서브 대화상자 ─── */
@@ -234,17 +234,17 @@
 .pp-desc-textarea {
   width: 100%;
   height: 140px;
-  border: 1px solid #c0c0c0;
-  border-radius: 2px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
   padding: 6px 8px;
-  font-size: 12px;
+  font-size: var(--font-size-base);
   font-family: inherit;
   resize: vertical;
   outline: none;
   box-sizing: border-box;
 }
 .pp-desc-textarea:focus {
-  border-color: #6182d6;
+  border-color: var(--color-primary);
 }
 
 /* ── 그림 탭 ── */
@@ -258,7 +258,7 @@
   display: flex;
   align-items: center;
   gap: 4px;
-  font-size: 12px;
+  font-size: var(--font-size-base);
   cursor: pointer;
 }
 .pp-effect-attrs {
@@ -278,9 +278,9 @@
   gap: 4px;
   margin: 8px 0;
   padding: 6px;
-  border: 1px solid #d0d0d0;
-  border-radius: 3px;
-  background: #fafafa;
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-raised);
 }
 .pp-reflect-grid { width: 300px; }
 .pp-reflect-grid .pp-preset-btn { width: 54px; height: 54px; }
@@ -289,9 +289,9 @@
 .pp-softedge-grid { width: 400px; }
 .pp-softedge-grid .pp-preset-btn { width: 58px; height: 58px; }
 .pp-preset-btn {
-  border: 1px solid #c0c0c0;
-  border-radius: 2px;
-  background: #fff;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
   cursor: pointer;
   font-size: 18px;
   display: flex;

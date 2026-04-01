@@ -12,18 +12,18 @@
 .ps-align-btn {
   width: 36px;
   height: 28px;
-  border: 1px solid #c0c0c0;
-  border-radius: 3px;
-  background: #fff;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--font-size-base);
   display: flex;
   align-items: center;
   justify-content: center;
   color: #444;
 }
 .ps-align-btn:hover {
-  background: #e7eaf4;
+  background: var(--color-accent-bg);
   border-color: #a0b0d8;
 }
 .ps-align-btn.active {
@@ -38,13 +38,13 @@
 }
 .ps-preview {
   margin-top: 8px;
-  border: 1px solid #d0d0d0;
-  border-radius: 3px;
-  background: #fafafa;
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-raised);
   padding: 10px;
   min-height: 56px;
-  font-size: 11px;
-  color: #666;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
   line-height: 1.6;
 }
 /* 탭 설정 탭 */
@@ -56,15 +56,15 @@
 }
 .ps-tab-list-col { flex: 1; min-width: 0; }
 .ps-tab-table-wrap {
-  border: 1px solid #d0d0d0;
-  border-radius: 3px;
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-md);
   overflow-y: auto;
   height: 118px;  /* 헤더 + 5행 고정 높이 */
-  background: #fff;
+  background: var(--color-surface);
 }
-.ps-tab-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.ps-tab-table { width: 100%; border-collapse: collapse; font-size: var(--font-size-base); }
 .ps-tab-table th {
-  background: #f0f0f0;
+  background: var(--color-bg);
   border-bottom: 1px solid #d0d0d0;
   padding: 3px 6px;
   text-align: left;
@@ -73,7 +73,7 @@
   top: 0;
 }
 .ps-tab-table td { padding: 2px 6px; cursor: pointer; }
-.ps-tab-table tr:hover { background: #f5f5f5; }
+.ps-tab-table tr:hover { background: var(--color-bg-light); }
 .ps-tab-table tr.selected { background: #cce5ff; }
 .ps-tab-list-btns {
   display: flex;
@@ -84,7 +84,7 @@
 .ps-tab-del-btn {
   min-width: 28px;
   padding: 2px 6px;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: #c00;
 }
 
@@ -94,16 +94,16 @@
 .ps-border-right { flex: 1; display: flex; flex-direction: column; align-items: center; }
 .ps-border-preview {
   width: 140px; height: 120px;
-  border: 1px solid #c0c0c0; background: #fff;
+  border: 1px solid var(--color-border); background: var(--color-surface);
   display: flex; align-items: center; justify-content: center;
 }
 .ps-border-inner { width: 100px; height: 80px; border: 1px dashed #ccc; }
 .ps-border-presets { display: flex; gap: 2px; margin-top: 4px; }
 .ps-preset-btn {
   width: 28px; height: 26px;
-  border: 1px solid #c0c0c0; border-radius: 2px;
-  background: #fff; cursor: pointer;
-  font-size: 12px;
+  border: 1px solid var(--color-border); border-radius: var(--radius-sm);
+  background: var(--color-surface); cursor: pointer;
+  font-size: var(--font-size-base);
   display: inline-flex; align-items: center; justify-content: center;
 }
 .ps-preset-btn:hover { background: #e8e8e8; }

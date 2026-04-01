@@ -18,9 +18,9 @@
   align-items: center;
   gap: 6px;
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   padding: 2px 4px;
-  border-radius: 3px;
+  border-radius: var(--radius-md);
 }
 
 .nd-radio-label:hover {
@@ -52,12 +52,12 @@
 .nd-preview {
   background: #fafbfc;
   border: 1px solid #d0d5dd;
-  border-radius: 3px;
+  border-radius: var(--radius-md);
   padding: 8px 10px;
   font-family: 'Malgun Gothic', sans-serif;
-  font-size: 12px;
+  font-size: var(--font-size-base);
   line-height: 1.6;
-  color: #333;
+  color: var(--color-text);
   white-space: pre;
   margin: 4px 0 0;
   min-height: 120px;
@@ -72,14 +72,14 @@
 }
 .nd-tab {
   padding: 6px 16px;
-  border: 1px solid #ccc;
+  border: 1px solid var(--color-border-input);
   border-bottom: none;
-  background: #f0f0f0;
+  background: var(--color-bg);
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--font-size-md);
 }
 .nd-tab.active {
-  background: #fff;
+  background: var(--color-surface);
   border-bottom: 1px solid #fff;
   margin-bottom: -1px;
   font-weight: bold;

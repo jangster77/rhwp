@@ -13,7 +13,7 @@
 .fs-icon-btn {
   width: 32px;
   height: 28px;
-  font-size: 16px;
+  font-size: var(--font-size-xl);
   line-height: 1;
   padding: 0;
   text-align: center;
@@ -31,10 +31,10 @@
 
 .fs-list {
   width: 200px;
-  border: 1px solid #ccc;
-  border-radius: 3px;
+  border: 1px solid var(--color-border-input);
+  border-radius: var(--radius-md);
   overflow-y: auto;
-  background: #fff;
+  background: var(--color-surface);
 }
 
 .fs-list-item {
@@ -43,7 +43,7 @@
   gap: 6px;
   padding: 6px 10px;
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   border-bottom: 1px solid #eee;
 }
 .fs-list-item:hover {
@@ -59,33 +59,33 @@
 }
 
 .fs-badge {
-  font-size: 10px;
-  background: #e0e0e0;
-  color: #666;
+  font-size: var(--font-size-xs);
+  background: var(--color-hover-bg);
+  color: var(--color-text-muted);
   padding: 1px 5px;
-  border-radius: 3px;
+  border-radius: var(--radius-md);
   flex-shrink: 0;
 }
 
 .fs-info {
   flex: 1;
-  border: 1px solid #ccc;
-  border-radius: 3px;
+  border: 1px solid var(--color-border-input);
+  border-radius: var(--radius-md);
   padding: 10px;
-  background: #fafafa;
+  background: var(--color-surface-raised);
   overflow-y: auto;
 }
 
 .fs-info-empty {
-  color: #999;
-  font-size: 13px;
+  color: var(--color-text-placeholder);
+  font-size: var(--font-size-md);
   text-align: center;
   padding-top: 40px;
 }
 
 .fs-info-name {
   font-weight: 600;
-  font-size: 14px;
+  font-size: var(--font-size-lg);
   margin-bottom: 10px;
   padding-bottom: 6px;
   border-bottom: 1px solid #ddd;
@@ -95,16 +95,16 @@
   display: flex;
   justify-content: space-between;
   padding: 3px 0;
-  font-size: 12px;
+  font-size: var(--font-size-base);
 }
 
 .fs-info-label {
-  color: #666;
+  color: var(--color-text-muted);
   min-width: 50px;
 }
 
 .fs-info-value {
-  color: #333;
+  color: var(--color-text);
   text-align: right;
 }
 
@@ -124,7 +124,7 @@
 .fse-label {
   width: 90px;
   flex-shrink: 0;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   text-align: right;
 }
 
@@ -134,7 +134,7 @@
 
 .fse-select {
   flex: 1;
-  font-size: 13px;
+  font-size: var(--font-size-md);
 }
 
 .fse-sep {

@@ -506,21 +506,23 @@ impl LayoutEngine {
         // 공통: 회전/대칭 정보 추출
         let transform = extract_shape_transform(shape.shape_attr());
 
-        // 회전이 있으면 current 크기로 그린 뒤 중앙 배치
-        // (CommonObjAttr.width/height는 AABB일 수 있으므로 실제 도형 크기는 current_width/height 사용)
-        let (render_x, render_y, render_w, render_h) = if transform.has_transform() {
+        // current 크기가 common 크기와 다르면 (스케일/회전) current 크기 사용
+        // 회전이 있으면 중앙 배치, 스케일만 있으면 base 위치 유지
+        let (render_x, render_y, render_w, render_h) = {
             let sa = shape.shape_attr();
             let cur_w = hwpunit_to_px(sa.current_width as i32, self.dpi);
             let cur_h = hwpunit_to_px(sa.current_height as i32, self.dpi);
-            if cur_w > 0.0 && cur_h > 0.0 {
+            if transform.has_transform() && cur_w > 0.0 && cur_h > 0.0 {
+                // 회전/대칭: 중앙 배치
                 let cx = base_x + w / 2.0;
                 let cy = base_y + h / 2.0;
                 (cx - cur_w / 2.0, cy - cur_h / 2.0, cur_w, cur_h)
+            } else if cur_w > 0.0 && cur_h > 0.0 && (cur_w - w).abs() > 1.0 || (cur_h - h).abs() > 1.0 {
+                // 스케일만 (회전 없음): base 위치 유지, current 크기 사용
+                (base_x, base_y, cur_w, cur_h)
             } else {
                 (base_x, base_y, w, h)
             }
-        } else {
-            (base_x, base_y, w, h)
         };
 
         match shape {
@@ -1438,10 +1440,17 @@ impl LayoutEngine {
                             cell_para_index: pi,
                             text_direction: 0,
                         });
+                        // 호스트 문단의 정렬 속성
+                        let host_align = styles.para_styles
+                            .get(para.para_shape_id as usize)
+                            .map(|ps| ps.alignment)
+                            .unwrap_or(Alignment::Left);
                         inline_y = self.layout_embedded_table(
                             tree, shape_node, table, styles,
                             &inner_area, para_start_y,
                             Some((section_index, para_index, &table_enclosing_path, ctrl_idx_in_para)),
+                            bin_data_content,
+                            host_align,
                         );
                     }
                     _ => {}

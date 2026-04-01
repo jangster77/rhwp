@@ -237,25 +237,38 @@ function setupZoomControls(): void {
   document.getElementById('sb-zoom-fit-width')!.addEventListener('click', () => {
     if (wasm.pageCount === 0) return;
     const container = document.getElementById('scroll-container')!;
-    const containerWidth = container.clientWidth - 40; // 여백 제외
+    const containerWidth = container.clientWidth - 40; // 좌우 여백 제외
     const pageInfo = wasm.getPageInfo(0);
-    const pageWidthPx = pageInfo.width / 7200 * 96; // HWPUNIT → px (96dpi)
-    const zoom = containerWidth / pageWidthPx;
-    vm.setZoom(Math.min(zoom, 4.0));
+    // pageInfo.width는 이미 px 단위 (96dpi 기준)
+    const zoom = containerWidth / pageInfo.width;
+    console.log(`[zoom-fit-width] container=${containerWidth} page=${pageInfo.width} zoom=${zoom.toFixed(3)}`);
+    vm.setZoom(Math.max(0.1, Math.min(zoom, 4.0)));
   });
 
   // 쪽 맞춤: 한 페이지 전체가 보이도록 줌 조절
   document.getElementById('sb-zoom-fit')!.addEventListener('click', () => {
     if (wasm.pageCount === 0) return;
     const container = document.getElementById('scroll-container')!;
-    const containerHeight = container.clientHeight - 40;
     const containerWidth = container.clientWidth - 40;
+    const containerHeight = container.clientHeight - 40;
     const pageInfo = wasm.getPageInfo(0);
-    const pageWidthPx = pageInfo.width / 7200 * 96;
-    const pageHeightPx = pageInfo.height / 7200 * 96;
-    const zoomW = containerWidth / pageWidthPx;
-    const zoomH = containerHeight / pageHeightPx;
-    vm.setZoom(Math.min(zoomW, zoomH, 4.0));
+    // pageInfo.width/height는 이미 px 단위 (96dpi 기준)
+    const zoomW = containerWidth / pageInfo.width;
+    const zoomH = containerHeight / pageInfo.height;
+    console.log(`[zoom-fit-page] containerW=${containerWidth} containerH=${containerHeight} pageW=${pageInfo.width} pageH=${pageInfo.height} zoomW=${zoomW.toFixed(3)} zoomH=${zoomH.toFixed(3)}`);
+    vm.setZoom(Math.max(0.1, Math.min(zoomW, zoomH, 4.0)));
+  });
+
+  // 모바일: 줌 값 클릭 → 100% 토글
+  document.getElementById('sb-zoom-val')!.addEventListener('click', () => {
+    const currentZoom = vm.getZoom();
+    if (Math.abs(currentZoom - 1.0) < 0.05) {
+      // 현재 100% → 쪽 맞춤으로 전환
+      document.getElementById('sb-zoom-fit')!.click();
+    } else {
+      // 현재 쪽 맞춤/기타 → 100%로 전환
+      vm.setZoom(1.0);
+    }
   });
 
   document.addEventListener('keydown', (e) => {
@@ -355,19 +368,32 @@ function setupEventListeners(): void {
 /** 문서 초기화 공통 시퀀스 (loadFile, createNewDocument 양쪽에서 사용) */
 async function initializeDocument(docInfo: DocumentInfo, displayName: string): Promise<void> {
   const msg = sbMessage();
-  if (docInfo.fontsUsed?.length) {
-    await loadWebFonts(docInfo.fontsUsed, (loaded, total) => {
-      msg.textContent = `폰트 로딩 중... (${loaded}/${total})`;
-    });
+  try {
+    console.log('[initDoc] 1. 폰트 로딩 시작');
+    if (docInfo.fontsUsed?.length) {
+      await loadWebFonts(docInfo.fontsUsed, (loaded, total) => {
+        msg.textContent = `폰트 로딩 중... (${loaded}/${total})`;
+      });
+    }
+    console.log('[initDoc] 2. 폰트 로딩 완료');
+    msg.textContent = displayName;
+    totalSections = docInfo.sectionCount ?? 1;
+    sbSection().textContent = `구역: 1 / ${totalSections}`;
+    console.log('[initDoc] 3. inputHandler deactivate');
+    inputHandler?.deactivate();
+    console.log('[initDoc] 4. canvasView loadDocument');
+    canvasView?.loadDocument();
+    console.log('[initDoc] 5. toolbar setEnabled');
+    toolbar?.setEnabled(true);
+    console.log('[initDoc] 6. toolbar initStyleDropdown');
+    toolbar?.initStyleDropdown();
+    console.log('[initDoc] 7. inputHandler activateWithCaretPosition');
+    inputHandler?.activateWithCaretPosition();
+    console.log('[initDoc] 8. 완료');
+  } catch (error) {
+    console.error('[initDoc] 오류:', error);
+    if (window.innerWidth < 768) alert(`초기화 오류: ${error}`);
   }
-  msg.textContent = displayName;
-  totalSections = docInfo.sectionCount ?? 1;
-  sbSection().textContent = `구역: 1 / ${totalSections}`;
-  inputHandler?.deactivate();
-  canvasView?.loadDocument();
-  toolbar?.setEnabled(true);
-  toolbar?.initStyleDropdown();
-  inputHandler?.activateWithCaretPosition();
 }
 
 async function loadFile(file: File): Promise<void> {
@@ -380,8 +406,11 @@ async function loadFile(file: File): Promise<void> {
     const elapsed = performance.now() - startTime;
     await initializeDocument(docInfo, `${file.name} — ${docInfo.pageCount}페이지 (${elapsed.toFixed(1)}ms)`);
   } catch (error) {
-    msg.textContent = `파일 로드 실패: ${error}`;
+    const errMsg = `파일 로드 실패: ${error}`;
+    msg.textContent = errMsg;
     console.error('[main] 파일 로드 실패:', error);
+    // 모바일에서 상태 메시지가 숨겨질 수 있으므로 alert으로도 표시
+    if (window.innerWidth < 768) alert(errMsg);
   }
 }
 

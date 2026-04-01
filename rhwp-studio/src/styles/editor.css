@@ -38,7 +38,7 @@
   position: relative;
   overflow-y: auto;
   overflow-x: auto;
-  background: #e0e0e0;
+  background: var(--color-hover-bg);
 }
 
 #scroll-content {
@@ -51,11 +51,11 @@
   left: 50%;
   transform: translateX(-50%);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-  background: #fff;
+  background: var(--color-surface);
 }
 
 #scroll-content.grid-mode canvas {
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 1px 4px var(--overlay-bg);
 }
 
 /* Drag & Drop */

@@ -235,10 +235,13 @@ export function getTextAt(this: any, pos: DocumentPosition, count: number): stri
   }
 }
 
-export function onInput(this: any): void {
+export function onInput(this: any, e?: InputEvent): void {
   if (!this.active) return;
 
   const text = this.textarea.value;
+  // const inputType = e?.inputType ?? 'unknown';
+  // const inputData = e?.data ?? '';
+  // const isComp = e?.isComposing ?? false;
 
   // IME 조합 중: 이전 조합 텍스트 삭제 → 현재 조합 텍스트 삽입 (실시간 렌더링)
   // Undo 스택에는 기록하지 않음 (compositionend에서 한 번에 기록)
@@ -274,6 +277,62 @@ export function onInput(this: any): void {
     }
 
     this.afterEdit();
+    return;
+  }
+
+  // iOS 폴백: composition 이벤트 없이 input만으로 한글 조합 처리
+  // iOS contentEditable에서는 compositionStart/End가 발생하지 않는다.
+  // div의 textContent를 건드리지 않고, 이전 상태와 비교하여 변경분만 처리.
+  // iOS 폴백: iOS Safari/Chrome은 한글 조합을 compositionStart/End 없이
+  // deleteContentBackward + insertText 쌍으로 처리한다.
+  // div의 textContent(value)가 iOS에 의해 완벽하게 관리되므로,
+  // 매 input마다 문서의 이전 삽입을 삭제하고 현재 value 전체로 교체한다.
+  // 주의: afterEdit() 호출 시 document-changed 이벤트가 Canvas를 재렌더링하면서
+  // div의 focus/textContent를 교란하므로, 렌더링은 디바운스하여 마지막에 한 번만 수행.
+  if (this._isIOS && !this.isComposing) {
+    // 앵커 설정 (첫 입력 시)
+    if (!this._iosAnchor) {
+      if (this.cursor.isInHeaderFooter()) {
+        this._iosAnchor = { ...this.cursor.getPosition(), charOffset: this.cursor.hfCharOffset };
+      } else if (this.cursor.isInFootnote()) {
+        this._iosAnchor = { ...this.cursor.getPosition(), charOffset: this.cursor.fnCharOffset };
+      } else {
+        this._iosAnchor = this.cursor.getPosition();
+      }
+      this._iosLength = 0;
+    }
+
+    // 이전 삽입 전부 삭제
+    if (this._iosLength > 0 && this._iosAnchor) {
+      this.deleteTextAt(this._iosAnchor, this._iosLength);
+    }
+
+    // 현재 div 전체 텍스트를 문서에 삽입 (빈 값이면 삭제만)
+    if (text) {
+      this.insertTextAtRaw(this._iosAnchor, text);
+      this._iosLength = text.length;
+    } else {
+      this._iosLength = 0;
+    }
+
+    // 커서 이동 (렌더링 없이 문서만 갱신)
+    const newOffset = this._iosAnchor.charOffset + (text?.length || 0);
+    if (this.cursor.isInHeaderFooter()) {
+      this.cursor.setHfCursorPosition(this.cursor.hfParaIdx, newOffset);
+    } else if (this.cursor.isInFootnote()) {
+      this.cursor.setFnCursorPosition(this.cursor.fnInnerParaIdx, newOffset);
+    } else {
+      this.cursor.moveTo({ ...this._iosAnchor, charOffset: newOffset });
+    }
+
+    // 렌더링 디바운스: 빠른 연속 입력 중에는 렌더링 생략,
+    // 마지막 입력 후 100ms 뒤에 한 번만 렌더링
+    clearTimeout(this._iosInputTimer);
+    this._iosInputTimer = setTimeout(() => {
+      this.afterEdit();
+      // 렌더링 후 div 포커스 복원 (afterEdit가 포커스를 뺏을 수 있음)
+      this.textarea.focus();
+    }, 100);
     return;
   }
 

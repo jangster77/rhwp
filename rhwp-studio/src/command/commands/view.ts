@@ -43,9 +43,8 @@ export const viewCommands: CommandDef[] = [
       const containerH = container.clientHeight - 40;
       const containerW = container.clientWidth - 40;
       const pi = services.wasm.getPageInfo(0);
-      const pw = pi.width / 7200 * 96;
-      const ph = pi.height / 7200 * 96;
-      vm.setZoom(Math.min(containerW / pw, containerH / ph, 4.0));
+      // pi.width/height는 이미 px 단위 (96dpi 기준)
+      vm.setZoom(Math.max(0.1, Math.min(containerW / pi.width, containerH / pi.height, 4.0)));
     },
   },
   {
@@ -57,8 +56,8 @@ export const viewCommands: CommandDef[] = [
       const container = document.getElementById('scroll-container')!;
       const containerW = container.clientWidth - 40;
       const pi = services.wasm.getPageInfo(0);
-      const pw = pi.width / 7200 * 96;
-      vm.setZoom(Math.min(containerW / pw, 4.0));
+      // pi.width는 이미 px 단위 (96dpi 기준)
+      vm.setZoom(Math.max(0.1, Math.min(containerW / pi.width, 4.0)));
     },
   },
   zoomLevel(50),

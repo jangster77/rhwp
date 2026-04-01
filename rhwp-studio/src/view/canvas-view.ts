@@ -60,6 +60,16 @@ export class CanvasView {
       return;
     }
 
+    // 모바일: 문서 로드 시 폭 맞춤 줌 자동 적용
+    if (window.innerWidth < 1024 && this.pages.length > 0) {
+      const containerWidth = this.container.clientWidth - 20;
+      const pageWidth = this.pages[0].width;
+      if (pageWidth > 0 && containerWidth > 0) {
+        const fitZoom = containerWidth / pageWidth;
+        this.viewportManager.setZoom(Math.max(0.1, Math.min(fitZoom, 4.0)));
+      }
+    }
+
     this.recalcLayout();
 
     this.container.scrollTop = 0;
@@ -122,7 +132,21 @@ export class CanvasView {
   private renderPage(pageIdx: number): void {
     const canvas = this.canvasPool.acquire(pageIdx);
     const zoom = this.viewportManager.getZoom();
-    const dpr = window.devicePixelRatio || 1;
+    const rawDpr = window.devicePixelRatio || 1;
+
+    // iOS WebKit Canvas 최대 크기 제한 (64MP = 67,108,864 pixels)
+    // 물리 크기 = pageSize × zoom × dpr 가 제한을 초과하면 dpr을 낮춘다
+    const pageInfo = this.pages[pageIdx];
+    const MAX_CANVAS_PIXELS = 67108864;
+    let dpr = rawDpr;
+    if (pageInfo) {
+      const physW = pageInfo.width * zoom * dpr;
+      const physH = pageInfo.height * zoom * dpr;
+      if (physW * physH > MAX_CANVAS_PIXELS) {
+        dpr = Math.sqrt(MAX_CANVAS_PIXELS / (pageInfo.width * zoom * pageInfo.height * zoom));
+        dpr = Math.max(1, Math.floor(dpr)); // 최소 1, 정수로 내림
+      }
+    }
     const renderScale = zoom * dpr;
 
     // Canvas를 DOM에 추가하고 위치를 설정한다

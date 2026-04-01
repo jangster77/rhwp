@@ -6,11 +6,11 @@
   align-items: center;
   height: 22px;
   padding: 0 10px;
-  background: #fafafa;
+  background: var(--color-surface-raised);
   border-top: 1px solid #b4b4b4;
   flex-shrink: 0;
-  font-size: 11px;
-  color: #333;
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
   font-family: 'Malgun Gothic', dotum, Arial, sans-serif;
   user-select: none;
 }
@@ -89,12 +89,12 @@
 
 /* 줌 값 표시 — 한컴 .btn_dropdown (height:20px) */
 .stb-zoom-val {
-  font-size: 11px;
+  font-size: var(--font-size-sm);
   height: 20px;
   line-height: 20px;
   min-width: 32px;
   text-align: center;
-  color: #333;
+  color: var(--color-text);
   padding: 0 4px;
 }
 
