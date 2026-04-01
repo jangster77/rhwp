@@ -277,6 +277,56 @@ export function onInput(this: any): void {
     return;
   }
 
+  // iOS 폴백: composition 이벤트 없이 input만으로 한글 조합 처리
+  // iOS에서는 compositionStart가 발생하지 않고 input만 연속 발생한다.
+  // contentEditable div의 textContent가 누적되므로 이전 텍스트를 교체한다.
+  if (this._isIOS && !this.isComposing) {
+    // 조합 앵커 설정 (첫 입력 시)
+    if (!this._iosComposing) {
+      this._iosComposing = true;
+      if (this.cursor.isInHeaderFooter()) {
+        this._iosAnchor = { ...this.cursor.getPosition(), charOffset: this.cursor.hfCharOffset };
+      } else if (this.cursor.isInFootnote()) {
+        this._iosAnchor = { ...this.cursor.getPosition(), charOffset: this.cursor.fnCharOffset };
+      } else {
+        this._iosAnchor = this.cursor.getPosition();
+      }
+      this._iosLength = 0;
+    }
+
+    if (this._iosAnchor && text) {
+      // 이전 텍스트 삭제
+      if (this._iosLength > 0) {
+        this.deleteTextAt(this._iosAnchor, this._iosLength);
+      }
+      // 현재 전체 텍스트 삽입
+      this.insertTextAtRaw(this._iosAnchor, text);
+      this._iosLength = text.length;
+
+      // 커서 이동
+      if (this.cursor.isInHeaderFooter()) {
+        this.cursor.setHfCursorPosition(this.cursor.hfParaIdx, this._iosAnchor.charOffset + text.length);
+      } else if (this.cursor.isInFootnote()) {
+        this.cursor.setFnCursorPosition(this.cursor.fnInnerParaIdx, this._iosAnchor.charOffset + text.length);
+      } else {
+        this.cursor.moveTo({ ...this._iosAnchor, charOffset: this._iosAnchor.charOffset + text.length });
+      }
+      this.afterEdit();
+    }
+
+    // 조합 종료 감지: 일정 시간 입력이 없으면 조합 완료로 간주
+    clearTimeout(this._iosInputTimer);
+    this._iosInputTimer = setTimeout(() => {
+      if (this._iosComposing) {
+        this._iosComposing = false;
+        this._iosAnchor = null;
+        this._iosLength = 0;
+        this.textarea.value = '';
+      }
+    }, 500);
+    return;
+  }
+
   // 일반 입력 (비조합) → Command로 실행
   if (!text) return;
 

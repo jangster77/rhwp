@@ -176,6 +176,13 @@ export class InputHandler {
   private isComposing = false;
   private compositionAnchor: DocumentPosition | null = null;
   private compositionLength = 0; // 문서에 삽입된 조합 텍스트 길이
+  // iOS 폴백: composition 이벤트 없이 input만으로 한글 조합 처리
+  private _iosComposing = false;
+  private _iosAnchor: DocumentPosition | null = null;
+  private _iosLength = 0;
+  private _iosInputTimer: any = null;
+  private _isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
   private onClickBound: (e: MouseEvent) => void;
   private onDblClickBound: (e: MouseEvent) => void;
@@ -204,24 +211,42 @@ export class InputHandler {
     this.selectionRenderer = new SelectionRenderer(container, virtualScroll);
     this.history = new CommandHistory();
 
-    // Hidden textarea 생성
-    // iOS WebKit IME 호환:
-    // - opacity:0 → 투명 색상 (opacity:0은 iOS가 IME 비활성화)
-    // - 1px → 1em (너무 작으면 iOS가 composition 생략)
-    // - fixed → absolute (fixed는 iOS에서 composition 이벤트 미발생)
-    // - font-size:16px (iOS 자동 줌 방지)
-    this.textarea = document.createElement('textarea');
-    this.textarea.style.cssText =
-      'position:absolute;left:0;top:0;width:1em;height:1.2em;' +
-      'color:transparent;background:transparent;caret-color:transparent;' +
-      'border:none;outline:none;resize:none;overflow:hidden;' +
-      'z-index:10;font-size:16px;padding:0;margin:0;';
-    this.textarea.setAttribute('autocomplete', 'off');
-    this.textarea.setAttribute('autocorrect', 'off');
-    this.textarea.setAttribute('autocapitalize', 'off');
-    this.textarea.setAttribute('spellcheck', 'false');
-    this.textarea.setAttribute('inputmode', 'text');
-    document.body.appendChild(this.textarea);
+    // Hidden input 요소 생성
+    // iOS WebKit에서는 <textarea>로 composition 이벤트가 발생하지 않으므로
+    // contentEditable <div>를 사용하고 .value 프록시를 추가한다.
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+    if (isIOS) {
+      const div = document.createElement('div');
+      div.contentEditable = 'true';
+      div.style.cssText =
+        'position:absolute;left:0;top:0;width:2em;height:1.5em;' +
+        'color:transparent;background:transparent;caret-color:transparent;' +
+        'border:none;outline:none;overflow:hidden;white-space:nowrap;' +
+        'z-index:10;font-size:16px;padding:0;margin:0;';
+      div.setAttribute('autocomplete', 'off');
+      div.setAttribute('autocorrect', 'off');
+      div.setAttribute('autocapitalize', 'off');
+      div.setAttribute('spellcheck', 'false');
+      div.setAttribute('inputmode', 'text');
+      document.body.appendChild(div);
+      // textarea 인터페이스 호환을 위한 프록시
+      Object.defineProperty(div, 'value', {
+        get() { return div.textContent || ''; },
+        set(v: string) { div.textContent = v; },
+      });
+      this.textarea = div as unknown as HTMLTextAreaElement;
+    } else {
+      this.textarea = document.createElement('textarea');
+      this.textarea.style.cssText =
+        'position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:0;';
+      this.textarea.setAttribute('autocomplete', 'off');
+      this.textarea.setAttribute('autocorrect', 'off');
+      this.textarea.setAttribute('autocapitalize', 'off');
+      this.textarea.setAttribute('spellcheck', 'false');
+      document.body.appendChild(this.textarea);
+    }
 
     this.onClickBound = this.onClick.bind(this);
     this.onDblClickBound = this.onDblClick.bind(this);
