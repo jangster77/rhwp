@@ -1495,6 +1495,43 @@ impl HwpDocument {
         ).map_err(|e| e.into())
     }
 
+    /// 커서 위치에 표를 삽입한다 (확장, JSON 옵션).
+    ///
+    /// options JSON: { sectionIdx, paraIdx, charOffset, rowCount, colCount,
+    ///                 treatAsChar?: bool, colWidths?: [u32, ...] }
+    #[wasm_bindgen(js_name = createTableEx)]
+    pub fn create_table_ex(&mut self, options_json: &str) -> Result<String, JsValue> {
+        use crate::document_core::helpers::{json_u32, json_bool};
+        let section_idx = json_u32(options_json, "sectionIdx").unwrap_or(0) as usize;
+        let para_idx = json_u32(options_json, "paraIdx").unwrap_or(0) as usize;
+        let char_offset = json_u32(options_json, "charOffset").unwrap_or(0) as usize;
+        let row_count = json_u32(options_json, "rowCount").unwrap_or(2) as u16;
+        let col_count = json_u32(options_json, "colCount").unwrap_or(2) as u16;
+        let treat_as_char = json_bool(options_json, "treatAsChar").unwrap_or(false);
+        // colWidths: JSON 배열에서 u32 목록 추출
+        let col_widths: Option<Vec<u32>> = {
+            let key = "colWidths";
+            if let Some(start) = options_json.find(&format!("\"{}\"", key)) {
+                let rest = &options_json[start..];
+                if let Some(arr_start) = rest.find('[') {
+                    if let Some(arr_end) = rest[arr_start..].find(']') {
+                        let arr_str = &rest[arr_start + 1..arr_start + arr_end];
+                        let nums: Vec<u32> = arr_str.split(',')
+                            .filter_map(|s| s.trim().parse::<u32>().ok())
+                            .collect();
+                        if !nums.is_empty() { Some(nums) } else { None }
+                    } else { None }
+                } else { None }
+            } else { None }
+        };
+
+        self.create_table_ex_native(
+            section_idx, para_idx, char_offset,
+            row_count, col_count, treat_as_char,
+            col_widths.as_deref(),
+        ).map_err(|e| e.into())
+    }
+
     /// 커서 위치에 그림을 삽입한다.
     ///
     /// image_data: 이미지 바이너리 데이터 (PNG/JPG/GIF/BMP 등)

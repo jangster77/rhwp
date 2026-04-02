@@ -793,6 +793,238 @@ impl DocumentCore {
         Ok(super::super::helpers::json_ok_with(&format!("\"paraIdx\":{},\"controlIdx\":0", insert_para_idx)))
     }
 
+    /// 커서 위치에 표를 삽입한다 (확장, JSON 옵션).
+    ///
+    /// 기본 create_table_native의 확장판으로, treat_as_char(인라인) 등 세부 속성을 지정할 수 있다.
+    /// treat_as_char=true인 경우:
+    ///   - 별도 문단을 생성하지 않고 기존 문단의 controls에 표를 추가
+    ///   - 텍스트 흐름에 8 UTF-16 코드유닛 자리를 삽입
+    ///   - 표 아래 빈 문단 미생성
+    pub fn create_table_ex_native(
+        &mut self,
+        section_idx: usize,
+        para_idx: usize,
+        char_offset: usize,
+        row_count: u16,
+        col_count: u16,
+        treat_as_char: bool,
+        col_widths_hu: Option<&[u32]>,
+    ) -> Result<String, HwpError> {
+        use crate::model::table::{Table, Cell, TablePageBreak};
+        use crate::model::paragraph::{CharShapeRef, LineSeg};
+        use crate::model::style::{BorderFill, BorderLine, BorderLineType, DiagonalLine, Fill};
+
+        if section_idx >= self.document.sections.len() {
+            return Err(HwpError::RenderError(format!(
+                "구역 인덱스 {} 범위 초과", section_idx)));
+        }
+        if para_idx >= self.document.sections[section_idx].paragraphs.len() {
+            return Err(HwpError::RenderError(format!(
+                "문단 인덱스 {} 범위 초과", para_idx)));
+        }
+        if row_count == 0 || col_count == 0 || col_count > 256 {
+            return Err(HwpError::RenderError(format!(
+                "행/열 수 범위 오류 (행={}, 열={})", row_count, col_count)));
+        }
+
+        if !treat_as_char {
+            return self.create_table_native(section_idx, para_idx, char_offset, row_count, col_count);
+        }
+
+        // ── 인라인 TAC 표 생성 ──
+
+        let pd = &self.document.sections[section_idx].section_def.page_def;
+        let outer_margin: i16 = 283;
+        let outer_margin_lr = (outer_margin * 2) as i32;
+        let content_width = (pd.width as i32 - pd.margin_left as i32 - pd.margin_right as i32 - outer_margin_lr).max(7200) as u32;
+
+        // 열 폭 결정
+        let col_ws: Vec<u32> = if let Some(widths) = col_widths_hu {
+            if widths.len() == col_count as usize {
+                widths.to_vec()
+            } else {
+                let w = content_width / col_count as u32;
+                vec![w; col_count as usize]
+            }
+        } else {
+            let w = content_width / col_count as u32;
+            vec![w; col_count as usize]
+        };
+        let total_width: u32 = col_ws.iter().sum();
+
+        let cell_pad = crate::model::Padding { left: 510, right: 510, top: 141, bottom: 141 };
+        let cell_height: u32 = (cell_pad.top + cell_pad.bottom) as u32;
+        let rendered_row_height: u32 = cell_pad.top as u32 + 1000 + cell_pad.bottom as u32;
+        let total_height = rendered_row_height * row_count as u32;
+
+        // BorderFill
+        let cell_border_fill_id = {
+            let existing = self.document.doc_info.border_fills.iter().position(|bf| {
+                bf.borders.iter().all(|b| b.line_type == BorderLineType::Solid && b.width >= 1)
+            });
+            if let Some(idx) = existing {
+                (idx + 1) as u16
+            } else {
+                let solid_border = BorderLine { line_type: BorderLineType::Solid, width: 1, color: 0 };
+                let new_bf = BorderFill {
+                    raw_data: None, attr: 0,
+                    borders: [solid_border, solid_border, solid_border, solid_border],
+                    diagonal: DiagonalLine { diagonal_type: 1, width: 0, color: 0 },
+                    fill: Fill::default(),
+                };
+                self.document.doc_info.border_fills.push(new_bf);
+                self.document.doc_info.raw_stream = None;
+                self.document.doc_info.border_fills.len() as u16
+            }
+        };
+
+        let current_para = &self.document.sections[section_idx].paragraphs[para_idx];
+        let default_char_shape_id: u32 = current_para.char_shapes.first()
+            .map(|cs| cs.char_shape_id).unwrap_or(0);
+        let default_para_shape_id: u16 = current_para.para_shape_id;
+
+        // 셀 생성
+        let mut cells = Vec::with_capacity((row_count as usize) * (col_count as usize));
+        for r in 0..row_count {
+            for c in 0..col_count {
+                let col_w = col_ws[c as usize];
+                let mut cell = Cell::new_empty(c, r, col_w, cell_height, cell_border_fill_id);
+                cell.padding = cell_pad;
+                cell.vertical_align = crate::model::table::VerticalAlign::Center;
+                for cp in &mut cell.paragraphs {
+                    cp.char_count_msb = true;
+                    cp.para_shape_id = default_para_shape_id;
+                    if cp.raw_header_extra.len() < 10 {
+                        let mut rhe = vec![0u8; 10];
+                        rhe[0..2].copy_from_slice(&1u16.to_le_bytes());
+                        rhe[4..6].copy_from_slice(&1u16.to_le_bytes());
+                        cp.raw_header_extra = rhe;
+                    }
+                    let seg_w = (col_w as i32) - 141 - 141;
+                    cp.line_segs = vec![LineSeg {
+                        text_start: 0, line_height: 1000, text_height: 1000,
+                        baseline_distance: 850, line_spacing: 600,
+                        segment_width: seg_w, tag: 0x00060000,
+                        ..Default::default()
+                    }];
+                }
+                cell.raw_list_extra = Vec::new();
+                cells.push(cell);
+            }
+        }
+
+        // Table 구조체
+        let row_sizes: Vec<i16> = (0..row_count).map(|_| col_count as i16).collect();
+        // raw_ctrl_data: treat_as_char + vert=Page(0) + horz=Para(3) + wrap=TopAndBottom(1)
+        let flags: u32 = (1 << 0) /* treat_as_char */
+            | (0 << 3) /* vert=Page */
+            | (3 << 8) /* horz=Para */
+            | (4 << 15) /* width_criterion=Absolute */
+            | (2 << 18) /* height_criterion=Absolute */
+            | (1 << 21) /* wrap=TopAndBottom */;
+        let mut raw_ctrl_data = vec![0u8; 38];
+        raw_ctrl_data[0..4].copy_from_slice(&flags.to_le_bytes());
+        raw_ctrl_data[12..16].copy_from_slice(&total_width.to_le_bytes());
+        raw_ctrl_data[16..20].copy_from_slice(&total_height.to_le_bytes());
+        raw_ctrl_data[24..26].copy_from_slice(&outer_margin.to_le_bytes());
+        raw_ctrl_data[26..28].copy_from_slice(&outer_margin.to_le_bytes());
+        raw_ctrl_data[28..30].copy_from_slice(&outer_margin.to_le_bytes());
+        raw_ctrl_data[30..32].copy_from_slice(&outer_margin.to_le_bytes());
+        let instance_id: u32 = {
+            let mut h: u32 = 0x7c160000;
+            h = h.wrapping_add(row_count as u32 * 0x1000);
+            h = h.wrapping_add(col_count as u32 * 0x100);
+            h = h.wrapping_add(total_width);
+            if h == 0 { h = 0x7c164b69; }
+            h
+        };
+        raw_ctrl_data[32..36].copy_from_slice(&instance_id.to_le_bytes());
+
+        let mut table = Table {
+            attr: 0x04000006,
+            row_count, col_count, cell_spacing: 0,
+            padding: cell_pad,
+            row_sizes,
+            border_fill_id: cell_border_fill_id,
+            zones: Vec::new(), cells, cell_grid: Vec::new(),
+            page_break: TablePageBreak::RowBreak,
+            repeat_header: false, caption: None,
+            common: crate::model::shape::CommonObjAttr {
+                treat_as_char: true,
+                text_wrap: crate::model::shape::TextWrap::TopAndBottom,
+                vert_rel_to: crate::model::shape::VertRelTo::Page,
+                horz_rel_to: crate::model::shape::HorzRelTo::Para,
+                vert_align: crate::model::shape::VertAlign::Top,
+                horz_align: crate::model::shape::HorzAlign::Left,
+                width: total_width,
+                height: total_height,
+                ..Default::default()
+            },
+            outer_margin_left: outer_margin,
+            outer_margin_right: outer_margin,
+            outer_margin_top: outer_margin,
+            outer_margin_bottom: outer_margin,
+            raw_ctrl_data,
+            raw_table_record_attr: 0x04000006,
+            raw_table_record_extra: vec![0u8; 2],
+            dirty: true,
+        };
+        table.rebuild_grid();
+
+        // ── 기존 문단에 인라인 삽입 ──
+        self.document.sections[section_idx].raw_stream = None;
+        let para = &mut self.document.sections[section_idx].paragraphs[para_idx];
+
+        // controls에 표 추가
+        let ctrl_idx = para.controls.len();
+        para.controls.push(Control::Table(Box::new(table)));
+        para.ctrl_data_records.push(None);
+
+        // char_offsets에 8 UTF-16 코드유닛 갭 삽입
+        // 확장 제어문자는 8 코드유닛을 차지
+        let insert_utf16_pos = if char_offset < para.char_offsets.len() {
+            para.char_offsets[char_offset]
+        } else if !para.char_offsets.is_empty() {
+            let last_idx = para.char_offsets.len() - 1;
+            let last_char_len = para.text.chars().nth(last_idx)
+                .map(|c| c.len_utf16() as u32).unwrap_or(1);
+            para.char_offsets[last_idx] + last_char_len
+        } else {
+            0
+        };
+
+        // 이후 char_offsets를 8만큼 shift
+        for offset in para.char_offsets.iter_mut() {
+            if *offset >= insert_utf16_pos {
+                *offset += 8;
+            }
+        }
+
+        // char_count 갱신 (확장 제어문자 8 + 기존)
+        para.char_count += 8;
+
+        // LINE_SEG 갱신: 표 높이를 반영
+        if let Some(seg) = para.line_segs.first_mut() {
+            let new_lh = (total_height as i32).max(seg.line_height);
+            if new_lh > seg.line_height {
+                seg.line_height = new_lh;
+                seg.text_height = new_lh;
+                seg.baseline_distance = (new_lh as f64 * 0.85) as i32;
+            }
+        }
+
+        // rebuild
+        self.rebuild_section(section_idx);
+
+        self.event_log.push(DocumentEvent::TableRowInserted {
+            section: section_idx, para: para_idx, ctrl: ctrl_idx,
+        });
+        Ok(super::super::helpers::json_ok_with(&format!(
+            "\"paraIdx\":{},\"controlIdx\":{}",
+            para_idx, ctrl_idx
+        )))
+    }
+
     /// 커서 위치에 그림을 삽입한다 (네이티브).
     pub fn insert_picture_native(
         &mut self,

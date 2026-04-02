@@ -15470,3 +15470,83 @@
         );
     }
 
+    /// createTableEx: 빈 문서에서 인라인 TAC 표를 생성하여 tac-case-001.hwp와 동일한 구조 검증
+    #[test]
+    fn test_create_inline_tac_table() {
+        let bytes = std::fs::read("saved/blank2010.hwp").expect("blank2010.hwp 읽기 실패");
+        let mut doc = HwpDocument::from_bytes(&bytes).unwrap();
+        doc.convert_to_editable_native().unwrap();
+        doc.paginate();
+
+        // 1. pi=0에 "TC #20" 입력
+        doc.insert_text_native(0, 0, 0, "TC #20").unwrap();
+        // 2. Enter → pi=1 생성
+        doc.split_paragraph_native(0, 0, 6).unwrap();
+        // 3. pi=1에 "tacglkj 표 3 배치 시작" 입력
+        doc.insert_text_native(0, 1, 0, "tacglkj 표 3 배치 시작").unwrap();
+
+        let text_len = doc.document.sections[0].paragraphs[1].text.chars().count();
+        eprintln!("  pi=1 text='{}' len={}", doc.document.sections[0].paragraphs[1].text, text_len);
+
+        // 4. pi=1, char_offset=text_len 위치에 인라인 TAC 2×2 표 생성
+        // 열 폭: 6777 HU × 2 = 13554 HU (tac-case-001.hwp과 동일)
+        let result = doc.create_table_ex_native(0, 1, text_len, 2, 2, true, Some(&[6777, 6777])).unwrap();
+        eprintln!("  createTableEx result: {}", result);
+        assert!(result.contains("\"ok\":true"), "createTableEx 실패: {}", result);
+
+        // 5. 표 뒤에 "4 tacglkj 표 다음" 텍스트 추가
+        let para = &doc.document.sections[0].paragraphs[1];
+        let new_text_offset = para.text.chars().count();
+        doc.insert_text_native(0, 1, new_text_offset, "4 tacglkj 표 다음").unwrap();
+
+        // 6. 검증
+        let para = &doc.document.sections[0].paragraphs[1];
+        eprintln!("  pi=1 final text='{}' controls={}", para.text, para.controls.len());
+
+        // 표가 controls에 추가되었는지
+        assert_eq!(para.controls.len(), 1, "pi=1에 표 컨트롤 1개 예상");
+        if let crate::model::control::Control::Table(t) = &para.controls[0] {
+            assert!(t.common.treat_as_char, "treat_as_char=true 예상");
+            assert_eq!(t.row_count, 2, "행 수 2 예상");
+            assert_eq!(t.col_count, 2, "열 수 2 예상");
+            eprintln!("  표: {}×{} tac={} width={} height={}",
+                t.row_count, t.col_count, t.common.treat_as_char, t.common.width, t.common.height);
+        } else {
+            panic!("pi=1의 첫 컨트롤이 Table이 아님");
+        }
+
+        // 셀에 텍스트 입력
+        doc.insert_text_in_cell_native(0, 1, 0, 0, 0, 0, "1").unwrap();
+        doc.insert_text_in_cell_native(0, 1, 0, 1, 0, 0, "2").unwrap();
+        doc.insert_text_in_cell_native(0, 1, 0, 2, 0, 0, "3 tacglkj").unwrap();
+        doc.insert_text_in_cell_native(0, 1, 0, 3, 0, 0, "4 tacglkj").unwrap();
+
+        // Enter → pi=2
+        let pi1_len = doc.document.sections[0].paragraphs[1].text.chars().count();
+        doc.split_paragraph_native(0, 1, pi1_len).unwrap();
+        // pi=2에 텍스트
+        doc.insert_text_native(0, 2, 0, "tacglkj 가나 옮").unwrap();
+
+        // 페이지네이션
+        doc.paginate();
+        let page_count: usize = doc.pagination.iter().map(|r| r.pages.len()).sum();
+        eprintln!("  최종 페이지 수: {}", page_count);
+        assert_eq!(page_count, 1, "1페이지 문서 예상");
+
+        // 텍스트에 표가 포함된 인라인 배치 확인
+        let para = &doc.document.sections[0].paragraphs[1];
+        assert!(!para.text.is_empty(), "pi=1에 텍스트가 있어야 함");
+        assert_eq!(para.controls.len(), 1, "pi=1에 인라인 표 1개");
+
+        // is_tac_table_inline 확인
+        let seg_w = para.line_segs.first().map(|s| s.segment_width).unwrap_or(0);
+        if let crate::model::control::Control::Table(t) = &para.controls[0] {
+            let is_inline = crate::renderer::height_measurer::is_tac_table_inline(
+                t, seg_w, &para.text, &para.controls);
+            eprintln!("  is_tac_table_inline: {} (seg_w={})", is_inline, seg_w);
+            assert!(is_inline, "인라인 TAC 표로 판별되어야 함");
+        }
+
+        eprintln!("  인라인 TAC 표 생성 테스트 통과");
+    }
+
