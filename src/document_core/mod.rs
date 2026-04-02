@@ -98,6 +98,9 @@ pub struct DocumentCore {
     /// 현재 활성 필드 위치 (커서가 진입한 누름틀 — 안내문 렌더링 스킵용)
     /// (section_idx, para_idx, field_control_idx)
     pub(crate) active_field: Option<ActiveFieldInfo>,
+    /// 구역별 문단 인덱스 오프셋 (삽입=+N, 삭제=-N, 페이지네이션 수렴 감지용)
+    /// paginate() 후 리셋.
+    pub(crate) para_offset: Vec<i32>,
 }
 
 /// 활성 필드 위치 정보
@@ -195,6 +198,7 @@ impl DocumentCore {
             hidden_header_footer: std::collections::HashSet::new(),
             file_name: String::new(),
             active_field: None,
+            para_offset: Vec::new(),
         }
     }
 }

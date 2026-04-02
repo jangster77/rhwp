@@ -62,6 +62,7 @@ impl DocumentCore {
             hidden_header_footer: std::collections::HashSet::new(),
             file_name: String::new(),
             active_field: None,
+            para_offset: Vec::new(),
         };
 
         doc.paginate();

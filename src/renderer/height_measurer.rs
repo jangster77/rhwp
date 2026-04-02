@@ -1152,6 +1152,57 @@ impl MeasuredSection {
             .map(|p| p.has_table)
             .unwrap_or(false)
     }
+
+    /// 문단 삽입 시 인덱스 조정 (전체 재측정 회피).
+    /// insert_at 위치에 더미 측정값을 삽입하고, 이후 표의 para_index를 +1.
+    pub fn shift_for_insert(&mut self, insert_at: usize) {
+        // 표 para_index 조정
+        for table in &mut self.tables {
+            if table.para_index >= insert_at {
+                table.para_index += 1;
+            }
+        }
+        // 더미 문단 측정값 삽입 (dirty로 표시되어 재측정됨)
+        let dummy = MeasuredParagraph {
+            para_index: insert_at,
+            total_height: 0.0,
+            line_heights: vec![0.0],
+            line_spacings: vec![0.0],
+            spacing_before: 0.0,
+            spacing_after: 0.0,
+            has_table: false,
+            has_picture: false,
+            picture_height: 0.0,
+        };
+        if insert_at <= self.paragraphs.len() {
+            self.paragraphs.insert(insert_at, dummy);
+        }
+        // para_index 재정렬
+        for (i, p) in self.paragraphs.iter_mut().enumerate() {
+            p.para_index = i;
+        }
+    }
+
+    /// 문단 삭제 시 인덱스 조정 (전체 재측정 회피).
+    /// remove_at 위치의 측정값을 제거하고, 이후 표의 para_index를 -1.
+    pub fn shift_for_remove(&mut self, remove_at: usize) {
+        // 삭제된 문단의 표 측정값 제거
+        self.tables.retain(|t| t.para_index != remove_at);
+        // 표 para_index 조정
+        for table in &mut self.tables {
+            if table.para_index > remove_at {
+                table.para_index -= 1;
+            }
+        }
+        // 문단 측정값 제거
+        if remove_at < self.paragraphs.len() {
+            self.paragraphs.remove(remove_at);
+        }
+        // para_index 재정렬
+        for (i, p) in self.paragraphs.iter_mut().enumerate() {
+            p.para_index = i;
+        }
+    }
 }
 
 impl HeightMeasurer {

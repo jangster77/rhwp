@@ -186,6 +186,153 @@ pub enum PageItem {
     },
 }
 
+impl PageItem {
+    /// 항목의 para_index를 반환한다.
+    pub fn para_index(&self) -> usize {
+        match self {
+            PageItem::FullParagraph { para_index } => *para_index,
+            PageItem::PartialParagraph { para_index, .. } => *para_index,
+            PageItem::Table { para_index, .. } => *para_index,
+            PageItem::PartialTable { para_index, .. } => *para_index,
+            PageItem::Shape { para_index, .. } => *para_index,
+        }
+    }
+
+    /// para_index를 offset만큼 조정한 새 항목을 반환한다.
+    pub fn with_offset(&self, offset: i32) -> Self {
+        let adjust = |pi: usize| (pi as i64 + offset as i64).max(0) as usize;
+        match self {
+            PageItem::FullParagraph { para_index } =>
+                PageItem::FullParagraph { para_index: adjust(*para_index) },
+            PageItem::PartialParagraph { para_index, start_line, end_line } =>
+                PageItem::PartialParagraph { para_index: adjust(*para_index), start_line: *start_line, end_line: *end_line },
+            PageItem::Table { para_index, control_index } =>
+                PageItem::Table { para_index: adjust(*para_index), control_index: *control_index },
+            PageItem::PartialTable { para_index, control_index, start_row, end_row, is_continuation,
+                split_start_content_offset, split_end_content_limit } =>
+                PageItem::PartialTable { para_index: adjust(*para_index), control_index: *control_index,
+                    start_row: *start_row, end_row: *end_row, is_continuation: *is_continuation,
+                    split_start_content_offset: *split_start_content_offset, split_end_content_limit: *split_end_content_limit },
+            PageItem::Shape { para_index, control_index } =>
+                PageItem::Shape { para_index: adjust(*para_index), control_index: *control_index },
+        }
+    }
+
+    /// 두 항목이 구조적으로 동일한지 비교 (para_index offset 적용).
+    fn matches_with_offset(&self, other: &PageItem, offset: i32) -> bool {
+        let adj = |pi: usize| (pi as i64 + offset as i64) as usize;
+        match (self, other) {
+            (PageItem::FullParagraph { para_index: a }, PageItem::FullParagraph { para_index: b }) =>
+                *a == adj(*b),
+            (PageItem::PartialParagraph { para_index: a, start_line: s1, end_line: e1 },
+             PageItem::PartialParagraph { para_index: b, start_line: s2, end_line: e2 }) =>
+                *a == adj(*b) && s1 == s2 && e1 == e2,
+            (PageItem::Table { para_index: a, control_index: c1 },
+             PageItem::Table { para_index: b, control_index: c2 }) =>
+                *a == adj(*b) && c1 == c2,
+            (PageItem::PartialTable { para_index: a, control_index: c1, start_row: sr1, end_row: er1, .. },
+             PageItem::PartialTable { para_index: b, control_index: c2, start_row: sr2, end_row: er2, .. }) =>
+                *a == adj(*b) && c1 == c2 && sr1 == sr2 && er1 == er2,
+            (PageItem::Shape { para_index: a, control_index: c1 },
+             PageItem::Shape { para_index: b, control_index: c2 }) =>
+                *a == adj(*b) && c1 == c2,
+            _ => false,
+        }
+    }
+}
+
+impl PaginationResult {
+    /// 이전 결과와 비교하여 수렴 페이지를 찾는다.
+    /// offset: 문단 인덱스 변화량 (삽입=+1, 삭제=-1)
+    /// 반환: 수렴 시작 페이지 인덱스 (None이면 수렴 없음)
+    pub fn find_convergence(&self, old: &PaginationResult, offset: i32) -> Option<usize> {
+        if offset == 0 { return Some(0); }
+        for page_idx in 0..self.pages.len().min(old.pages.len()) {
+            let new_page = &self.pages[page_idx];
+            let old_page = &old.pages[page_idx];
+            if new_page.column_contents.len() != old_page.column_contents.len() { continue; }
+            let matched = new_page.column_contents.iter()
+                .zip(old_page.column_contents.iter())
+                .all(|(nc, oc)| {
+                    nc.items.len() == oc.items.len()
+                    && nc.items.iter().zip(oc.items.iter())
+                        .all(|(ni, oi)| ni.matches_with_offset(oi, offset))
+                });
+            if matched {
+                return Some(page_idx);
+            }
+        }
+        None
+    }
+
+    /// 수렴 이후 페이지를 이전 결과에서 복사한다 (para_index offset 적용).
+    pub fn copy_converged_pages(&mut self, old: &PaginationResult, converge_page: usize, offset: i32) {
+        // 수렴 페이지 이후를 이전 결과에서 복사
+        self.pages.truncate(converge_page);
+        for old_page in &old.pages[converge_page..] {
+            let mut new_page = PageContent {
+                page_index: old_page.page_index,
+                page_number: old_page.page_number,
+                section_index: old_page.section_index,
+                layout: old_page.layout.clone(),
+                column_contents: old_page.column_contents.iter().map(|cc| {
+                    ColumnContent {
+                        column_index: cc.column_index,
+                        items: cc.items.iter().map(|it| it.with_offset(offset)).collect(),
+                        zone_layout: cc.zone_layout.clone(),
+                        zone_y_offset: cc.zone_y_offset,
+                        wrap_around_paras: cc.wrap_around_paras.iter().map(|w| WrapAroundPara {
+                            para_index: (w.para_index as i64 + offset as i64).max(0) as usize,
+                            table_para_index: (w.table_para_index as i64 + offset as i64).max(0) as usize,
+                            has_text: w.has_text,
+                        }).collect(),
+                    }
+                }).collect(),
+                active_header: old_page.active_header.clone(),
+                active_footer: old_page.active_footer.clone(),
+                page_number_pos: old_page.page_number_pos.clone(),
+                page_hide: old_page.page_hide.clone(),
+                footnotes: old_page.footnotes.iter().map(|f| {
+                    let source = match &f.source {
+                        FootnoteSource::Body { para_index, control_index } =>
+                            FootnoteSource::Body { para_index: (*para_index as i64 + offset as i64).max(0) as usize, control_index: *control_index },
+                        FootnoteSource::TableCell { para_index, table_control_index, cell_index, cell_para_index, cell_control_index } =>
+                            FootnoteSource::TableCell { para_index: (*para_index as i64 + offset as i64).max(0) as usize,
+                                table_control_index: *table_control_index, cell_index: *cell_index,
+                                cell_para_index: *cell_para_index, cell_control_index: *cell_control_index },
+                        FootnoteSource::ShapeTextBox { para_index, shape_control_index, tb_para_index, tb_control_index } =>
+                            FootnoteSource::ShapeTextBox { para_index: (*para_index as i64 + offset as i64).max(0) as usize,
+                                shape_control_index: *shape_control_index, tb_para_index: *tb_para_index, tb_control_index: *tb_control_index },
+                    };
+                    FootnoteRef { number: f.number, source }
+                }).collect(),
+                active_master_page: old_page.active_master_page.clone(),
+                extra_master_pages: old_page.extra_master_pages.clone(),
+            };
+            // hidden_empty_paras는 별도 처리
+            self.pages.push(new_page);
+        }
+        // wrap_around_paras도 복사
+        for w in &old.wrap_around_paras {
+            let shifted_pi = (w.para_index as i64 + offset as i64).max(0) as usize;
+            let shifted_tpi = (w.table_para_index as i64 + offset as i64).max(0) as usize;
+            if !self.wrap_around_paras.iter().any(|e| e.para_index == shifted_pi) {
+                self.wrap_around_paras.push(WrapAroundPara {
+                    para_index: shifted_pi,
+                    table_para_index: shifted_tpi,
+                    has_text: w.has_text,
+                });
+            }
+        }
+        // hidden_empty_paras offset
+        let mut new_hidden = std::collections::HashSet::new();
+        for &pi in &old.hidden_empty_paras {
+            new_hidden.insert((pi as i64 + offset as i64).max(0) as usize);
+        }
+        self.hidden_empty_paras = new_hidden;
+    }
+}
+
 /// 페이지 분할 엔진
 pub struct Paginator {
     /// DPI

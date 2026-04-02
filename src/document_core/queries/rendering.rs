@@ -605,15 +605,27 @@ impl DocumentCore {
         let composed = compose_paragraph(para);
         self.composed[section_idx].insert(para_idx, composed);
         self.mark_section_dirty(section_idx);
-        // 문단 삽입 시 prev_measured의 para_index가 불일치하므로 전체 재측정 강제
-        // dirty_paragraphs=None → measure_section_selective가 incremental로 폴백
-        // measured_sections 초기화 → incremental이 아닌 measure_section(완전 재측정)으로 폴백
-        if section_idx < self.dirty_paragraphs.len() {
-            self.dirty_paragraphs[section_idx] = None;
-        }
+        // measured_sections: 인덱스 조정으로 기존 측정값 재사용 (전체 재측정 회피)
         if section_idx < self.measured_sections.len() {
-            self.measured_sections[section_idx] = MeasuredSection { paragraphs: Vec::new(), tables: Vec::new() };
+            self.measured_sections[section_idx].shift_for_insert(para_idx);
         }
+        // dirty_paragraphs: 삽입된 문단과 분할 원본만 dirty 표시
+        if section_idx < self.dirty_paragraphs.len() {
+            let para_count = self.document.sections[section_idx].paragraphs.len();
+            let bits = self.dirty_paragraphs[section_idx]
+                .get_or_insert_with(|| vec![false; para_count]);
+            // 기존 비트맵에 삽입 위치 추가 (후속 인덱스 shift)
+            if para_idx <= bits.len() {
+                bits.insert(para_idx, true);
+            }
+            // 비트맵 길이를 문단 수에 맞춤
+            bits.resize(para_count, false);
+            // 분할 원본 문단도 dirty
+            if para_idx > 0 { bits[para_idx - 1] = true; }
+        }
+        // para_offset 누적 (수렴 감지용)
+        while self.para_offset.len() <= section_idx { self.para_offset.push(0); }
+        self.para_offset[section_idx] += 1;
     }
 
     /// composed 벡터에서 문단 항목을 제거한다 (문단 병합/삭제 후).
@@ -623,13 +635,26 @@ impl DocumentCore {
             self.composed[section_idx].remove(para_idx);
         }
         self.mark_section_dirty(section_idx);
-        // 문단 제거 시 prev_measured의 para_index가 불일치하므로 전체 재측정 강제
-        if section_idx < self.dirty_paragraphs.len() {
-            self.dirty_paragraphs[section_idx] = None;
-        }
+        // measured_sections: 인덱스 조정으로 기존 측정값 재사용
         if section_idx < self.measured_sections.len() {
-            self.measured_sections[section_idx] = MeasuredSection { paragraphs: Vec::new(), tables: Vec::new() };
+            self.measured_sections[section_idx].shift_for_remove(para_idx);
         }
+        // dirty_paragraphs: 병합 대상 문단만 dirty 표시
+        if section_idx < self.dirty_paragraphs.len() {
+            let para_count = self.document.sections[section_idx].paragraphs.len();
+            let bits = self.dirty_paragraphs[section_idx]
+                .get_or_insert_with(|| vec![false; para_count]);
+            if para_idx < bits.len() {
+                bits.remove(para_idx);
+            }
+            bits.resize(para_count, false);
+            // 병합 결과 문단 dirty
+            if para_idx < bits.len() { bits[para_idx] = true; }
+            if para_idx > 0 && para_idx - 1 < bits.len() { bits[para_idx - 1] = true; }
+        }
+        // para_offset 누적 (수렴 감지용)
+        while self.para_offset.len() <= section_idx { self.para_offset.push(0); }
+        self.para_offset[section_idx] -= 1;
     }
 
     /// 모든 구역을 dirty로 표시한다.
@@ -829,6 +854,44 @@ impl DocumentCore {
 
             self.measured_tables[idx] = measured.tables.clone();
             self.measured_sections[idx] = measured;
+
+            // ── 수렴 감지: 이전 페이지네이션과 비교하여 변경 흡수 지점 탐색 ──
+            // 판단 후 검증: 수렴으로 복사한 결과를 full pagination과 비교하여 정합성 확인
+            let offset = self.para_offset.get(idx).copied().unwrap_or(0);
+            if offset != 0 {
+                let old_result = &self.pagination[idx];
+                if let Some(converge_page) = result.find_convergence(old_result, offset) {
+                    let new_page_count = result.pages.len();
+                    let old_page_count = old_result.pages.len();
+                    if converge_page > 0 && converge_page < new_page_count && converge_page < old_page_count {
+                        // 검증: full pagination에서 수렴 이후 페이지가 old+offset와 일치하는지 확인
+                        let mut verified = true;
+                        let check_end = result.pages.len().min(old_page_count);
+                        for pi in converge_page..check_end {
+                            let new_page = &result.pages[pi];
+                            let old_page = &old_result.pages[pi];
+                            let new_items: Vec<usize> = new_page.column_contents.iter()
+                                .flat_map(|cc| cc.items.iter().map(|it| it.para_index())).collect();
+                            let old_items: Vec<usize> = old_page.column_contents.iter()
+                                .flat_map(|cc| cc.items.iter().map(|it| (it.para_index() as i64 + offset as i64) as usize)).collect();
+                            if new_items != old_items {
+                                eprintln!("CONVERGENCE_VERIFY_FAIL: sec{} page {} new={:?} old+offset={:?}",
+                                    idx, pi + 1, new_items, old_items);
+                                verified = false;
+                                break;
+                            }
+                        }
+                        if result.pages.len() != old_page_count {
+                            verified = false;
+                        }
+
+                        if verified {
+                            eprintln!("CONVERGENCE: sec{} page {} 수렴 확인 ({}페이지 재사용 가능)",
+                                idx, converge_page + 1, old_page_count - converge_page);
+                        }
+                    }
+                }
+            }
 
             // 바탕쪽 선택 (기본 + 확장)
             if !section.section_def.master_pages.is_empty() {
@@ -1156,6 +1219,11 @@ impl DocumentCore {
                 }
                 self.para_column_map[idx] = col_map;
             }
+        }
+
+        // para_offset 리셋 (수렴 감지 완료)
+        for off in &mut self.para_offset {
+            *off = 0;
         }
 
         // 표 dirty 플래그 초기화
