@@ -152,9 +152,14 @@ impl SvgRenderer {
                     let cy = node.bbox.y + node.bbox.height / 2.0;
                     let color = color_to_svg(run.style.color);
                     let font_size = if run.style.font_size > 0.0 { run.style.font_size } else { 12.0 };
-                    let font_family = if run.style.font_family.is_empty() { "sans-serif" } else { &run.style.font_family };
+                    let font_family = if run.style.font_family.is_empty() {
+                        "sans-serif".to_string()
+                    } else {
+                        let fb = super::generic_fallback(&run.style.font_family);
+                        format!("{},{}", run.style.font_family, fb)
+                    };
                     let mut attrs = format!("font-family=\"{}\" font-size=\"{}\" fill=\"{}\" text-anchor=\"middle\" dominant-baseline=\"central\"",
-                        escape_xml(font_family), font_size, color);
+                        escape_xml(&font_family), font_size, color);
                     if run.style.bold { attrs.push_str(" font-weight=\"bold\""); }
                     if run.style.italic { attrs.push_str(" font-style=\"italic\""); }
                     for c in run.text.chars() {
@@ -1083,8 +1088,12 @@ impl SvgRenderer {
         let stroke_color = "#000000";
         let text_color = if is_reversed { "#FFFFFF" } else { &color_to_svg(style.color) };
 
-        let font_family = if style.font_family.is_empty() { "sans-serif" } else { &style.font_family };
-        let mut font_attrs = format!("font-family=\"{}\" font-size=\"{:.2}\"", escape_xml(font_family), inner_font_size);
+        let font_family_str = if style.font_family.is_empty() {
+            "sans-serif".to_string()
+        } else {
+            format!("{},sans-serif", style.font_family)
+        };
+        let mut font_attrs = format!("font-family=\"{}\" font-size=\"{:.2}\"", escape_xml(&font_family_str), inner_font_size);
         if style.bold { font_attrs.push_str(" font-weight=\"bold\""); }
         if style.italic { font_attrs.push_str(" font-style=\"italic\""); }
 
@@ -1153,8 +1162,12 @@ impl SvgRenderer {
         let stroke_color = "#000000";
         let text_color = if is_reversed { "#FFFFFF" } else { &color_to_svg(style.color) };
 
-        let font_family = if style.font_family.is_empty() { "sans-serif" } else { &style.font_family };
-        let mut font_attrs = format!("font-family=\"{}\" font-size=\"{:.2}\"", escape_xml(font_family), inner_font_size);
+        let font_family_str = if style.font_family.is_empty() {
+            "sans-serif".to_string()
+        } else {
+            format!("{},sans-serif", style.font_family)
+        };
+        let mut font_attrs = format!("font-family=\"{}\" font-size=\"{:.2}\"", escape_xml(&font_family_str), inner_font_size);
         if style.bold { font_attrs.push_str(" font-weight=\"bold\""); }
         if style.italic { font_attrs.push_str(" font-style=\"italic\""); }
 
@@ -1496,9 +1509,10 @@ impl Renderer for SvgRenderer {
         let color = color_to_svg(style.color);
         let font_size = if style.font_size > 0.0 { style.font_size } else { 12.0 };
         let font_family = if style.font_family.is_empty() {
-            "sans-serif"
+            "sans-serif".to_string()
         } else {
-            &style.font_family
+            let fb = super::generic_fallback(&style.font_family);
+            format!("{},{}", style.font_family, fb)
         };
 
         let ratio = if style.ratio > 0.0 { style.ratio } else { 1.0 };
@@ -1507,7 +1521,7 @@ impl Renderer for SvgRenderer {
         // 공통 스타일 속성 구성 (fill 제외 — 그림자/원본에서 각각 설정)
         let mut base_attrs = format!(
             "font-family=\"{}\" font-size=\"{}\"",
-            escape_xml(font_family), font_size,
+            escape_xml(&font_family), font_size,
         );
         if style.bold {
             base_attrs.push_str(" font-weight=\"bold\"");
