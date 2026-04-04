@@ -35,6 +35,10 @@ if [ -z "$OVSX_PAT" ]; then
   exit 1
 fi
 
+# 로고 복사 (assets/logo → media/icon.png)
+echo "📦 로고 복사..."
+cp ../assets/logo/logo-128.png media/icon.png
+
 # WASM 파일 복사
 echo "📦 WASM 파일 복사..."
 cp ../pkg/rhwp_bg.wasm media/
