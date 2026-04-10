@@ -9,6 +9,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - WebAssembly(WASM)로 빌드하여 웹브라우저에서 HWP 문서를 볼 수 있도록 함
 - 한컴 웹기안기의 오픈소스 대안
 
+## 클로드 코드 사용 시 주의사항
+
+이 프로젝트는 **하이퍼-워터폴** 방법론을 적용한다. 클로드 코드의 기본 동작(빠른 실행, 자율 수정)과 충돌이 발생할 수 있으므로 반드시 숙지한다.
+
+상세 내용: [`mydocs/troubleshootings/claude_code_hyperfall_rule_conflict.md`](mydocs/troubleshootings/claude_code_hyperfall_rule_conflict.md)
+
+**핵심 규칙 요약**:
+- 소스 수정 전 반드시 작업지시자 승인 요청
+- 이슈→브랜치→할일→계획서→구현 순서 절대 생략 금지
+- 각 단계 완료 후 승인 없이 다음 단계 진행 금지
+- 이슈 클로즈는 작업지시자 승인 후에만 수행
+
+---
+
 ## 문서 생성 규칙
 
 모든 문서는 한국어로 작성한다.
