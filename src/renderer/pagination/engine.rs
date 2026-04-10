@@ -986,7 +986,7 @@ impl Paginator {
         // 호스트 문단 간격 계산
         let is_tac_table = table.common.treat_as_char;
         let table_text_wrap = table.common.text_wrap;
-        let (host_spacing, host_line_spacing) = {
+        let (host_spacing, host_line_spacing, spacing_before_px) = {
             let mp = measured.get_measured_paragraph(para_idx);
             let sb = mp.map(|m| m.spacing_before).unwrap_or(0.0);
             let sa = mp.map(|m| m.spacing_after).unwrap_or(0.0);
@@ -1025,7 +1025,10 @@ impl Paginator {
             } else {
                 (if !is_column_top { sb } else { 0.0 }) + outer_top
             };
-            (before + sa + outer_bottom + host_line_spacing, host_line_spacing)
+            // spacing_before_px: 레이아웃에서 표 배치 전 y_offset을 전진시키는 양
+            // (= before에서 outer_top을 뺀 순수 spacing_before 부분)
+            let spacing_before_px = before - outer_top;
+            (before + sa + outer_bottom + host_line_spacing, host_line_spacing, spacing_before_px)
         };
 
         // 문단 내 표 컨트롤 수: 여러 개이면 개별 표 높이 사용
@@ -1107,7 +1110,7 @@ impl Paginator {
             // 비-TAC 표: 행 단위 분할
             self.split_table_rows(st, para_idx, ctrl_idx, para, measured, measurer, mt,
                 table, table_available_height, base_available_height,
-                host_spacing, is_tac_table);
+                host_spacing, spacing_before_px, is_tac_table);
         } else {
             // MeasuredTable 없으면 기존 방식 (전체 배치)
             if !st.current_items.is_empty() {
@@ -1290,6 +1293,7 @@ impl Paginator {
         table_available_height: f64,
         base_available_height: f64,
         host_spacing: f64,
+        spacing_before_px: f64,
         _is_tac_table: bool,
     ) {
         let row_count = mt.row_heights.len();
@@ -1414,7 +1418,15 @@ impl Paginator {
             } else {
                 0.0
             };
-            let avail_for_rows = (page_avail - header_overhead).max(0.0);
+            // 첫 분할에서 spacing_before만큼 차감:
+            // 레이아웃 엔진은 표 배치 전 spacing_before만큼 y_offset을 전진시키지만,
+            // page_avail 계산에는 반영되지 않으므로 avail_for_rows에서 보정한다.
+            let sb_extra = if !is_continuation && cursor_row == 0 && content_offset == 0.0 {
+                spacing_before_px
+            } else {
+                0.0
+            };
+            let avail_for_rows = (page_avail - header_overhead - sb_extra).max(0.0);
 
             let effective_first_row_h = if content_offset > 0.0 && can_intra_split {
                 mt.effective_row_height(cursor_row, content_offset)
