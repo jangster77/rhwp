@@ -502,7 +502,7 @@ fn read_text_content_with_tabs(reader: &mut Reader<&[u8]>) -> Result<(String, Ve
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Text(ref t)) => {
-                text.push_str(&t.unescape().unwrap_or_default());
+                text.push_str(&t.decode().unwrap_or_default());
             }
             Ok(Event::End(ref e)) => {
                 let tn = e.name(); if local_name(tn.as_ref()) == b"t" {
@@ -2377,7 +2377,7 @@ fn parse_field_parameters(
             }
             Ok(Event::Text(ref t)) => {
                 if in_command {
-                    field.command = t.unescape().unwrap_or_default().to_string();
+                    field.command = t.decode().unwrap_or_default().to_string();
                     in_command = false;
                 }
             }
@@ -2509,7 +2509,7 @@ fn read_compose_text(reader: &mut Reader<&[u8]>) -> Result<String, HwpxError> {
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Text(ref t)) => {
-                text.push_str(&t.unescape().unwrap_or_default());
+                text.push_str(&t.decode().unwrap_or_default());
             }
             Ok(Event::End(ref ee)) => {
                 let eename = ee.name();
@@ -2591,7 +2591,7 @@ fn read_dutmal_text(reader: &mut Reader<&[u8]>, end_tag: &[u8]) -> Result<String
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Text(ref t)) => {
-                text.push_str(&t.unescape().unwrap_or_default());
+                text.push_str(&t.decode().unwrap_or_default());
             }
             Ok(Event::End(ref ee)) => {
                 let eename = ee.name();
@@ -2659,7 +2659,7 @@ fn parse_equation(
             }
             Ok(Event::Text(ref txt)) => {
                 if in_script {
-                    if let Ok(s) = txt.unescape() {
+                    if let Ok(s) = txt.decode() {
                         script.push_str(&s);
                     }
                 }
@@ -2753,7 +2753,7 @@ fn parse_form_object(
                         loop {
                             match reader.read_event_into(&mut tbuf) {
                                 Ok(Event::Text(ref t)) => {
-                                    if let Ok(s) = t.unescape() {
+                                    if let Ok(s) = t.decode() {
                                         form.text.push_str(&s);
                                     }
                                 }
