@@ -45,7 +45,71 @@
         ],
         "priority": "default"
       }
-    ]
+    ],
+    "commands": [
+      {
+        "command": "rhwp.print",
+        "title": "HWP: 인쇄"
+      },
+      {
+        "command": "rhwp.exportSvg",
+        "title": "HWP: SVG로 내보내기"
+      },
+      {
+        "command": "rhwp.debugOverlay",
+        "title": "HWP: 디버그 오버레이 보기"
+      },
+      {
+        "command": "rhwp.dumpParagraph",
+        "title": "HWP: 문단 덤프"
+      }
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "rhwp.print",
+          "when": "resourceExtname == .hwp || resourceExtname == .hwpx",
+          "group": "rhwp@1"
+        },
+        {
+          "command": "rhwp.exportSvg",
+          "when": "resourceExtname == .hwp || resourceExtname == .hwpx",
+          "group": "rhwp@2"
+        },
+        {
+          "command": "rhwp.debugOverlay",
+          "when": "resourceExtname == .hwp || resourceExtname == .hwpx",
+          "group": "rhwp@3"
+        },
+        {
+          "command": "rhwp.dumpParagraph",
+          "when": "resourceExtname == .hwp || resourceExtname == .hwpx",
+          "group": "rhwp@4"
+        }
+      ],
+      "editor/title/context": [
+        {
+          "command": "rhwp.print",
+          "when": "resourceExtname == .hwp || resourceExtname == .hwpx",
+          "group": "rhwp@1"
+        },
+        {
+          "command": "rhwp.exportSvg",
+          "when": "resourceExtname == .hwp || resourceExtname == .hwpx",
+          "group": "rhwp@2"
+        },
+        {
+          "command": "rhwp.debugOverlay",
+          "when": "resourceExtname == .hwp || resourceExtname == .hwpx",
+          "group": "rhwp@3"
+        },
+        {
+          "command": "rhwp.dumpParagraph",
+          "when": "resourceExtname == .hwp || resourceExtname == .hwpx",
+          "group": "rhwp@4"
+        }
+      ]
+    }
   },
   "scripts": {
     "compile": "webpack --mode production",
