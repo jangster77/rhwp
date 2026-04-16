@@ -131,6 +131,28 @@ mod tests {
     }
 
     #[test]
+    fn tab_and_linebreak_emitted_inline() {
+        let mut doc = Document::default();
+        let mut section = crate::model::document::Section::default();
+        let mut para = crate::model::paragraph::Paragraph::default();
+        para.text = "A\tB\nC".to_string();
+        section.paragraphs.push(para);
+        doc.sections.push(section);
+
+        let bytes = serialize_hwpx(&doc).expect("serialize");
+        let cursor = std::io::Cursor::new(&bytes);
+        let mut archive = zip::ZipArchive::new(cursor).expect("zip");
+        let mut sec0 = archive.by_name("Contents/section0.xml").expect("section0");
+        let mut xml = String::new();
+        std::io::Read::read_to_string(&mut sec0, &mut xml).expect("read");
+        assert!(
+            xml.contains("<hp:t>A<hp:tab/>B<hp:lineBreak/>C</hp:t>"),
+            "tab/linebreak not rendered inline: {}",
+            xml
+        );
+    }
+
+    #[test]
     fn xml_escape_applied_to_section_text() {
         let mut doc = Document::default();
         let mut section = crate::model::document::Section::default();
