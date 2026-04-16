@@ -64,3 +64,19 @@ pub fn text<W: Write>(w: &mut Writer<W>, content: &str) -> Result<(), SerializeE
         .map_err(|e| SerializeError::XmlError(e.to_string()))?;
     Ok(())
 }
+
+/// XML 속성·텍스트 이스케이프 (&, <, >, ", ')
+pub fn xml_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&apos;"),
+            _ => out.push(c),
+        }
+    }
+    out
+}

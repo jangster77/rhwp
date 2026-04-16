@@ -98,6 +98,57 @@ mod tests {
     }
 
     #[test]
+    fn serialize_text_paragraph_roundtrip() {
+        let mut doc = Document::default();
+        let mut section = crate::model::document::Section::default();
+        let mut para = crate::model::paragraph::Paragraph::default();
+        para.text = "안녕 Hello 123".to_string();
+        section.paragraphs.push(para);
+        doc.sections.push(section);
+
+        let bytes = serialize_hwpx(&doc).expect("serialize text");
+        // 직렬화된 XML에 텍스트가 그대로 들어갔는지 ZIP에서 추출해 확인
+        let cursor = std::io::Cursor::new(&bytes);
+        let mut archive = zip::ZipArchive::new(cursor).expect("valid zip");
+        let mut sec0 = archive.by_name("Contents/section0.xml").expect("section0");
+        let mut xml = String::new();
+        std::io::Read::read_to_string(&mut sec0, &mut xml).expect("read");
+        assert!(
+            xml.contains("<hp:t>안녕 Hello 123</hp:t>"),
+            "text not injected into section0.xml"
+        );
+
+        // 라운드트립도 확인
+        drop(sec0);
+        let parsed = parse_hwpx(&bytes).expect("parse back");
+        assert_eq!(parsed.sections.len(), 1);
+        let p0 = &parsed.sections[0].paragraphs[0];
+        assert!(
+            p0.text.contains("안녕 Hello 123"),
+            "text roundtrip failed: {:?}",
+            p0.text
+        );
+    }
+
+    #[test]
+    fn xml_escape_applied_to_section_text() {
+        let mut doc = Document::default();
+        let mut section = crate::model::document::Section::default();
+        let mut para = crate::model::paragraph::Paragraph::default();
+        para.text = "a & b < c".to_string();
+        section.paragraphs.push(para);
+        doc.sections.push(section);
+
+        let bytes = serialize_hwpx(&doc).expect("serialize");
+        let cursor = std::io::Cursor::new(&bytes);
+        let mut archive = zip::ZipArchive::new(cursor).expect("zip");
+        let mut sec0 = archive.by_name("Contents/section0.xml").expect("section0");
+        let mut xml = String::new();
+        std::io::Read::read_to_string(&mut sec0, &mut xml).expect("read");
+        assert!(xml.contains("a &amp; b &lt; c"), "escape missing: {}", xml);
+    }
+
+    #[test]
     fn mimetype_is_first_entry() {
         let doc = Document::default();
         let bytes = serialize_hwpx(&doc).expect("serialize");
