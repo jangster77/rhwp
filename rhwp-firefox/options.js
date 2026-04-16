@@ -7,6 +7,7 @@ document.getElementById('labelShowBadges').textContent = browser.i18n.getMessage
 document.getElementById('labelHoverPreview').textContent = browser.i18n.getMessage('optionsHoverPreview');
 document.getElementById('saved').textContent = browser.i18n.getMessage('optionsSaved');
 document.getElementById('privacy').textContent = browser.i18n.getMessage('optionsPrivacy');
+document.getElementById('version').textContent = browser.runtime.getManifest().version;
 
 const inputs = ['autoOpen', 'showBadges', 'hoverPreview'];
 

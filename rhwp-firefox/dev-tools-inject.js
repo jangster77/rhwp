@@ -4,7 +4,8 @@
   'use strict';
   if (window.rhwpDev) return;
 
-  const VERSION = '0.1.0';
+  // content-script가 documentElement에 미리 세팅한 버전 사용 (manifest 단일 소스)
+  const VERSION = document.documentElement.getAttribute('data-hwp-extension-version') || 'unknown';
 
   window.rhwpDev = {
     inspect() {

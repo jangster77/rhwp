@@ -27,11 +27,12 @@
     console.error('[rhwp] 설정 로드 오류:', err);
   });
 
-  // 확장 존재 알림
+  // 확장 존재 알림 (버전은 manifest 단일 소스)
+  const EXT_VERSION = browser.runtime.getManifest().version;
   document.documentElement.setAttribute('data-hwp-extension', 'rhwp');
-  document.documentElement.setAttribute('data-hwp-extension-version', '0.1.0');
+  document.documentElement.setAttribute('data-hwp-extension-version', EXT_VERSION);
   window.dispatchEvent(new CustomEvent('hwp-extension-ready', {
-    detail: { name: 'rhwp', version: '0.1.0', capabilities: ['preview', 'edit', 'print'] }
+    detail: { name: 'rhwp', version: EXT_VERSION, capabilities: ['preview', 'edit', 'print'] }
   }));
 
   // 개발자 도구 주입 (페이지 컨텍스트에 rhwpDev 노출)
