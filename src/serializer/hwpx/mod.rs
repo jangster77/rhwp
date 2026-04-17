@@ -1,14 +1,19 @@
 //! HWPX(ZIP+XML) 직렬화 모듈 — `parser::hwpx`의 역방향.
 //!
-//! ## 단계
-//! - Stage 1 (현재): 한컴2020 호환 빈 HWPX 생성 (11개 필수 파일)
-//! - Stage 2: 본문 문단·텍스트·lineSegArray IR 직렬화
+//! ## 단계 (#182)
+//! - Stage 0 (완료): 기반 공사 — SerializeContext, IrDiff 하네스, canonical_defaults
+//! - Stage 1: header.xml IR 기반 동적 생성
+//! - Stage 2: section.xml 동적화 + charPrIDRef 매핑
 //! - Stage 3: 표(Table)
 //! - Stage 4: 그림(Picture) + BinData
-//! - Stage 5: 라운드트립 테스트 + CLI
+//! - Stage 5: 도형·필드 + 대형 실문서 스모크
 
+pub mod canonical_defaults;
 pub mod content;
+pub mod context;
+pub mod fixtures;
 pub mod header;
+pub mod roundtrip;
 pub mod section;
 pub mod static_assets;
 pub mod utils;
@@ -17,14 +22,19 @@ pub mod writer;
 use crate::model::document::Document;
 
 use super::SerializeError;
+use context::SerializeContext;
 use writer::HwpxZipWriter;
 
 /// Document IR을 HWPX(ZIP+XML) 바이트로 직렬화한다.
 ///
-/// Stage 1: 한컴2020이 요구하는 11개 필수 파일을 모두 생성한다. 빈 Document의 경우
-/// 보일러플레이트와 최소 골격(1개 섹션, 1개 문단)만 포함된다.
+/// Stage 0 이후: 빈 문서 특수 분기를 제거하고 **항상 동적 경로**를 탄다.
+/// `SerializeContext`가 1-pass 스캔으로 ID 풀을 구성하고, 각 writer가 동일 컨텍스트를
+/// 참조한다. 직렬화 종료 시 `assert_all_refs_resolved()`가 미등록 참조를 단언한다.
 pub fn serialize_hwpx(doc: &Document) -> Result<Vec<u8>, SerializeError> {
     use static_assets::*;
+
+    // 1-pass: ID 풀 구성
+    let ctx = SerializeContext::collect_from_document(doc);
 
     let mut z = HwpxZipWriter::new();
 
@@ -34,7 +44,7 @@ pub fn serialize_hwpx(doc: &Document) -> Result<Vec<u8>, SerializeError> {
     // 2. version.xml
     z.write_deflated("version.xml", VERSION_XML.as_bytes())?;
 
-    // 3. Contents/header.xml
+    // 3. Contents/header.xml — Stage 1에서 동적 생성으로 전환 예정
     let header_xml = header::write_header(doc)?;
     z.write_deflated("Contents/header.xml", &header_xml)?;
 
@@ -57,19 +67,18 @@ pub fn serialize_hwpx(doc: &Document) -> Result<Vec<u8>, SerializeError> {
     // 7. META-INF/container.rdf
     z.write_deflated("META-INF/container.rdf", META_INF_CONTAINER_RDF.as_bytes())?;
 
-    // 8. Contents/content.hpf — 정확히 1섹션 + BinData 없는 빈 문서일 때는 레퍼런스 템플릿
-    if doc.sections.len() == 1 && doc.bin_data_content.is_empty() {
-        z.write_deflated("Contents/content.hpf", EMPTY_CONTENT_HPF.as_bytes())?;
-    } else {
-        let content_hpf = content::write_content_hpf(&section_hrefs, &[])?;
-        z.write_deflated("Contents/content.hpf", &content_hpf)?;
-    }
+    // 8. Contents/content.hpf — 항상 동적 경로 (Stage 0: 빈 문서 분기 제거)
+    let content_hpf = content::write_content_hpf(&section_hrefs, &[])?;
+    z.write_deflated("Contents/content.hpf", &content_hpf)?;
 
     // 9. META-INF/container.xml
     z.write_deflated("META-INF/container.xml", META_INF_CONTAINER_XML.as_bytes())?;
 
     // 10. META-INF/manifest.xml
     z.write_deflated("META-INF/manifest.xml", META_INF_MANIFEST_XML.as_bytes())?;
+
+    // 참조 정합성 단언 (Stage 1+에서 본격 활용)
+    ctx.assert_all_refs_resolved()?;
 
     z.finish()
 }
