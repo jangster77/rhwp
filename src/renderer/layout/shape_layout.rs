@@ -1000,6 +1000,28 @@ impl LayoutEngine {
                                 rendered = true;
                             }
                         }
+
+                        // Task #195 단계 14: OOXML 차트 부재 시 EMF 네이티브 SVG 폴백
+                        if !rendered {
+                            if let Some(emf_bytes) = container.preview_emf.as_ref() {
+                                let render_rect = (
+                                    render_x as f32, render_y as f32,
+                                    render_w as f32, render_h as f32,
+                                );
+                                if let Ok(svg_fragment) = crate::emf::convert_to_svg(emf_bytes, render_rect) {
+                                    let node_id = tree.next_id();
+                                    let node = RenderNode::new(
+                                        node_id,
+                                        RenderNodeType::RawSvg(crate::renderer::render_tree::RawSvgNode {
+                                            svg: svg_fragment,
+                                        }),
+                                        BoundingBox::new(render_x, render_y, render_w, render_h),
+                                    );
+                                    parent.children.push(node);
+                                    rendered = true;
+                                }
+                            }
+                        }
                     }
                 }
 
