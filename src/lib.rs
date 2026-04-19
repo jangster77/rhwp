@@ -12,6 +12,7 @@ pub mod error;
 pub mod document_core;
 pub mod wasm_api;
 pub mod wmf;
+pub mod emf;
 pub mod ooxml_chart;
 
 pub use parser::{DocumentParser, parse_document};
