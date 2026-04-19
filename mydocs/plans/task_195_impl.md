@@ -3,10 +3,11 @@
 > 수행계획서: [task_195.md](task_195.md)
 > 마일스톤: 미지정
 > **스코프 확장 (2026-04-19)**: 단계 1~5 완료 후 작업지시자 요청으로 실제 데이터 렌더링까지 범위 확대. 단계 6~8 추가.
+> **스코프 재확장 (2026-04-19)**: 단계 1~8 완료 후 작업지시자 요청으로 EMF → 네이티브 SVG 벡터 변환기까지 범위 확대. 단계 9~14 추가.
 
 ## 전체 개요
 
-8단계로 진행한다. 각 단계는 독립적으로 커밋 가능하며, 단계 완료 후 단계별 완료보고서(`_stageN.md`)를 작성해 승인받은 뒤 다음 단계로 진행한다.
+14단계로 진행한다. 각 단계는 독립적으로 커밋 가능하며, 단계 완료 후 단계별 완료보고서(`_stageN.md`)를 작성해 승인받은 뒤 다음 단계로 진행한다.
 
 | 단계 | 제목 | 산출물 | 커밋 단위 | 상태 |
 |------|------|--------|----------|------|
@@ -15,9 +16,15 @@
 | 3 | Parser 계층: CHART_DATA / OLE | parser 신규 파일 2건 + shape.rs 분기 | parser 완성 | ✅ `2aa5f2f` |
 | 4 | Renderer 계층: placeholder SVG | renderer 분기 + 라벨 | 1차 렌더 | ✅ `081df07`, `a2511e6` |
 | 5 | 기존 samples 회귀 + 보고서 | 단계별 보고서 + 최종 보고서 | 1차 마무리 | ✅ `7869b99` |
-| 6 | BinData 해제 인프라 | bin_data 디코더 + DocInfo 플래그 + API | infra | 진행 예정 |
-| 7 | 내부 CFB 파싱 | OlePres000 / OOXMLChartContents / Contents 추출 | parser 확장 | 진행 예정 |
-| 8 | OOXML 차트 네이티브 SVG 렌더 + EMF 폴백 | 실제 차트 렌더 | 2차 마무리 | 진행 예정 |
+| 6 | BinData 해제 인프라 | bin_data 디코더 + DocInfo 플래그 + API | infra | ✅ 완료 |
+| 7 | 내부 CFB 파싱 | OlePres000 / OOXMLChartContents / Contents 추출 | parser 확장 | ✅ 완료 |
+| 8 | OOXML 차트 네이티브 SVG 렌더 + EMF 폴백 | 실제 차트 렌더 | 2차 마무리 | ✅ 완료 |
+| 9 | EMF 스펙 조사 + IR 설계 | tech 문서 | 문서만 | 진행 예정 |
+| 10 | EMF 모듈 골격 + 헤더 파서 | src/emf/ 신규 + EMR_HEADER | 최소 모듈 | 진행 예정 |
+| 11 | 객체/상태 레코드 파서 | 펜/브러시/폰트 + DC 스택 | 상태 완성 | 진행 예정 |
+| 12 | 드로잉 레코드 + SVG 컨버터 1차 | 선/사각형/타원/패스 | 기본 도형 | 진행 예정 |
+| 13 | 텍스트·비트맵 레코드 | EMR_EXTTEXTOUTW + EMR_STRETCHDIBITS | 텍스트/이미지 | 진행 예정 |
+| 14 | shape_layout 통합 + 회귀 + 최종 보고서 | Ole arm EMF 폴백 활성화 | 3차 마무리 | 진행 예정 |
 
 ## 단계 1: 스펙 조사 및 IR 설계
 
@@ -317,12 +324,195 @@ OLE 컨테이너에서 얻은 OOXML 차트 XML을 네이티브 SVG 차트로 렌
 - mydocs/working/task_195_stage8.md
 - mydocs/working/task_195_report.md (최종 보고서 갱신)
 
+## 단계 9: EMF 스펙 조사 + IR 설계
+
+### 목적
+MS-EMF 스펙을 조사하고 rhwp 내부 표현(IR)을 확정한다. **코드 변경 없음**, 문서만 작성.
+
+### 작업 항목
+1. `mydocs/tech/emf_spec.md` 작성
+   - EMF 파일 구조 (EMR_HEADER, 레코드 시퀀스, EOF)
+   - 주요 RecordType enum 카탈로그 (필요 레코드만: 헤더/드로잉/객체/상태/텍스트/비트맵)
+   - EMF vs WMF 차이 (32bit 좌표, 확장 헤더, 전혀 다른 RecordType)
+   - POINTL/RECTL/SIZEL 구조체
+2. `mydocs/tech/emf_ir_design.md` 작성
+   - `emf::Record` enum (드로잉/객체/상태/텍스트/비트맵 카테고리)
+   - `emf::DeviceContext` 스택 구조
+   - `emf::ObjectTable` (핸들 테이블)
+   - 좌표 변환 행렬(3×3 affine) 설계
+
+### 검증
+- 문서 2건이 MS-EMF 공식 스펙과 일치하는지 자체 리뷰
+- IR 설계가 기존 `src/wmf/` 패턴과 일관성 있는지 (분리 유지)
+
+### 산출물 커밋
+- `mydocs/tech/emf_spec.md`
+- `mydocs/tech/emf_ir_design.md`
+- `mydocs/working/task_195_stage9.md`
+
+## 단계 10: EMF 모듈 골격 + 헤더 파서
+
+### 목적
+`src/emf/` 모듈을 신설하고 EMR_HEADER만 읽는 최소 구현 제공.
+
+### 작업 항목
+1. `src/emf/mod.rs` 신규 — 공개 API(`parse`, `Header`, `ParseError`)
+2. `src/emf/parser/mod.rs` 신규 — 레코드 디스패처(헤더만), 스트림 reader
+3. `src/emf/parser/objects/` 신규 — RECTL, POINTL, SIZEL, LOGFONTW 등 기본 구조체
+4. `src/emf/parser/constants/record_type.rs` 신규 — RecordType enum (1차는 필요 레코드만)
+5. `src/emf/parser/records/header.rs` 신규 — EMR_HEADER + Extension 1/2 파싱
+6. `src/lib.rs` — `pub mod emf;`
+7. 단위 테스트
+   - 고정 EMR_HEADER 픽스처(최소 88바이트) 파싱 검증
+   - 매직 검증 실패 시 오류 반환
+
+### 검증
+- `cargo build --release` 성공
+- `cargo test emf::` 통과
+- 1.hwp의 OlePres000에서 추출한 EMF 바이트 → `emf::parse` → Header 출력 확인(통합 테스트)
+
+### 산출물 커밋
+- 위 신규 파일들
+- `mydocs/working/task_195_stage10.md`
+
+## 단계 11: 객체/상태 레코드 파서
+
+### 목적
+펜/브러시/폰트 객체 생성·선택·삭제 + DC 스택을 구현한다.
+
+### 작업 항목
+1. `src/emf/parser/records/object.rs` 신규
+   - `EMR_CREATEPEN`, `EMR_CREATEBRUSHINDIRECT`, `EMR_EXTCREATEFONTINDIRECTW`
+   - `EMR_SELECTOBJECT`, `EMR_DELETEOBJECT`
+2. `src/emf/parser/records/state.rs` 신규
+   - `EMR_SAVEDC`, `EMR_RESTOREDC`, `EMR_SETWORLDTRANSFORM`, `EMR_MODIFYWORLDTRANSFORM`
+   - `EMR_SETMAPMODE`, `EMR_SETWINDOWEXTEX`, `EMR_SETWINDOWORGEX`, `EMR_SETVIEWPORTEXTEX`, `EMR_SETVIEWPORTORGEX`
+   - `EMR_SETTEXTCOLOR`, `EMR_SETBKCOLOR`, `EMR_SETBKMODE`, `EMR_SETTEXTALIGN`
+3. `src/emf/converter/device_context.rs` 신규
+   - `DeviceContext { pen, brush, font, text_color, bg_color, world_xform, ... }`
+   - `DcStack { stack: Vec<DeviceContext> }` — save/restore
+   - `ObjectTable { handles: HashMap<u32, Object> }`
+4. 단위 테스트
+   - 펜/브러시/폰트 생성 → 선택 → 삭제 시나리오
+   - SaveDC → SetWorldTransform → RestoreDC로 상태 복원 검증
+
+### 검증
+- `cargo build --release` 성공
+- `cargo test emf::` 통과
+- 회귀: WMF 테스트 영향 없음 확인
+
+### 산출물 커밋
+- 위 신규 파일들
+- `mydocs/working/task_195_stage11.md`
+
+## 단계 12: 드로잉 레코드 + SVG 컨버터 1차
+
+### 목적
+기본 도형 레코드(선/사각형/타원/폴리라인/패스)를 파싱하고 SVG로 변환한다.
+
+### 작업 항목
+1. `src/emf/parser/records/drawing.rs` 신규
+   - `EMR_MOVETOEX`, `EMR_LINETO`
+   - `EMR_RECTANGLE`, `EMR_ROUNDRECT`, `EMR_ELLIPSE`
+   - `EMR_POLYLINE16`, `EMR_POLYGON16`, `EMR_POLYBEZIER16`
+   - `EMR_ARC`, `EMR_CHORD`, `EMR_PIE`
+2. `src/emf/parser/records/path.rs` 신규
+   - `EMR_BEGINPATH`, `EMR_ENDPATH`, `EMR_CLOSEFIGURE`, `EMR_STROKEPATH`, `EMR_FILLPATH`, `EMR_STROKEANDFILLPATH`
+3. `src/emf/converter/mod.rs` 신규 — `Player` (레코드 순회 → SVG 노드 생성)
+4. `src/emf/converter/svg/mod.rs` 신규 — SVG 노드 빌더
+   - `<line>`, `<rect>`, `<ellipse>`, `<polyline>`, `<polygon>`, `<path>`
+   - 펜 속성 → stroke, 브러시 속성 → fill
+   - 좌표 변환 (world xform + window/viewport)
+5. 단위 테스트
+   - 단순 도형 EMF 픽스처(자체 제작) → SVG 구조 검증
+   - 좌표 변환 정확성 검증
+
+### 검증
+- `cargo build --release` 성공
+- `cargo test emf::` 통과
+- 1.hwp의 OlePres000 EMF → SVG 변환 → 시각 확인(작업지시자 제공 파일)
+
+### 산출물 커밋
+- 위 신규 파일들
+- `mydocs/working/task_195_stage12.md`
+
+## 단계 13: 텍스트·비트맵 레코드
+
+### 목적
+`EMR_EXTTEXTOUTW` (UTF-16 텍스트) + `EMR_STRETCHDIBITS` (비트맵)를 구현한다.
+
+### 작업 항목
+1. `src/emf/parser/records/text.rs` 신규
+   - `EMR_EXTTEXTOUTW` 파싱 (RECTL, options, EMRTEXT, OutputString[UTF-16])
+   - `EMR_EXTTEXTOUTA` (보조)
+2. `src/emf/parser/records/bitmap.rs` 신규
+   - `EMR_STRETCHDIBITS` 파싱 (DIB header + bits)
+   - `EMR_BITBLT`, `EMR_STRETCHBLT` (단순화 버전)
+3. `src/emf/converter/svg/` 확장
+   - 텍스트: 현재 폰트(LOGFONTW) → SVG `<text>` + font-family 체인
+     - rhwp 폰트 폴백 전략 재사용 (`tech/font_fallback_strategy.md`)
+   - 비트맵: DIB → PNG 인코딩 → base64 → `<image>` 임베딩
+4. 단위 테스트
+   - 텍스트 EMF 픽스처 → SVG `<text>` 검증
+   - 비트맵 EMF 픽스처 → `<image xlink:href="data:image/png;base64,...">` 검증
+
+### 검증
+- `cargo build --release` 성공
+- `cargo test emf::` 통과
+- 1.hwp의 OlePres000 EMF → SVG 변환 → 텍스트·비트맵 포함 차트 시각 확인
+
+### 산출물 커밋
+- 위 신규 파일들
+- `mydocs/working/task_195_stage13.md`
+
+## 단계 14: shape_layout 통합 + 회귀 + 최종 보고서
+
+### 목적
+Ole arm의 EMF 폴백을 placeholder → 네이티브 SVG로 활성화하고, 전체 회귀 및 최종 보고서를 작성한다.
+
+### 작업 항목
+1. `src/renderer/layout/shape_layout.rs` Ole arm 수정
+   ```rust
+   ShapeObject::Ole(ole) => {
+       if let Some(chart_xml) = ooxml_chart {
+           // 기존 OOXML 네이티브 렌더
+       } else if let Some(emf_bytes) = preview_emf {
+           match emf::convert_to_svg(emf_bytes, render_rect) {
+               Ok(svg_fragment) => /* RawSvg 삽입 */,
+               Err(_) => /* 기존 placeholder 유지 */,
+           }
+       } else {
+           // placeholder
+       }
+   }
+   ```
+2. `src/main.rs` — `dump-emf` 서브커맨드(옵션)로 EMF 파일 단독 변환 지원
+3. 회귀 테스트
+   - 1.hwp export-svg → OLE 영역이 placeholder 대신 실제 EMF 변환 SVG
+   - 전체 samples/ export-svg 크래시 없음
+   - WMF 파서 회귀 없음 (878+15 테스트 통과)
+4. 최종 보고서 갱신
+   - `mydocs/working/task_195_stage14.md`
+   - `mydocs/working/task_195_report.md` (EMF 섹션 추가)
+   - `mydocs/orders/20260419.md` 상태 갱신
+
+### 검증
+- 1.hwp의 차트 외 OLE(있다면) 실제 렌더 확인
+- 전체 samples/ 회귀 통과
+- 단위 테스트 전체 green
+
+### 산출물 커밋
+- src/renderer/layout/shape_layout.rs
+- src/main.rs (dump-emf)
+- 보고서 문서
+
 ## 공통 규칙
 
 - 각 단계 커밋 메시지: `Task #195: <단계 제목>`
 - 단계별 완료 후 승인 없이 다음 단계 진행 금지
 - 단계별 완료보고서에는 **실제 수정 파일 목록**, **테스트 결과**, **미해결 이슈** 포함
 - 단계 5 완료 후 `local/task195` → `local/devel` merge는 작업지시자 승인 후 수행
+- 단계 14 완료 후 추가 `local/task195` → `local/devel` merge 수행 (devel push 포함 여부는 작업지시자 결정)
 
 ## 리스크 및 대응
 
