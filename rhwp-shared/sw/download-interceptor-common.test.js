@@ -1,9 +1,9 @@
-// #198: shouldInterceptDownload 단위 테스트
+// shouldInterceptDownload 단위 테스트 (#198 / #207)
 //
-// 실행: node --test rhwp-chrome/sw/download-interceptor.test.js
+// 실행: node --test rhwp-shared/sw/download-interceptor-common.test.js
 //
-// Chrome API 와 무관한 순수 함수만 테스트. 인터셉터 등록 / handleHwpDownload 자체는
-// 작업지시자 수동 검증 (Stage 3) 에서 통합 검증.
+// 브라우저 API 에 의존하지 않는 순수 함수만 테스트.
+// Chrome(onDeterminingFilename) / Firefox(onCreated+onChanged) 양쪽에서 동일하게 사용.
 
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
@@ -178,6 +178,36 @@ test('DEXT5 변종 확장자 (.jsp/.do) 도 차단', () => {
     shouldInterceptDownload({
       url: 'https://example.com/dext5handler.do?id=1',
       filename: 'doc.hwp',
+    }),
+    false,
+  );
+});
+
+// ─── Firefox 특화: onCreated / onChanged 단계별 시나리오 (#207) ─
+
+test('Firefox onCreated: url만 있고 filename/mime 없어도 감지', () => {
+  // browser.downloads.onCreated 시점에는 filename 이 아직 없을 수 있음
+  assert.equal(
+    shouldInterceptDownload({ id: 1, url: 'https://example.com/a.hwp' }),
+    true,
+  );
+});
+
+test('Firefox onCreated: url/filename 없고 mime 만으로 감지', () => {
+  // Content-Disposition 없이 MIME 으로만 HWP 알 수 있는 경우
+  assert.equal(
+    shouldInterceptDownload({ id: 2, mime: 'application/x-hwp' }),
+    true,
+  );
+});
+
+test('Firefox onChanged: filename 확정 후 일반 파일은 미감지', () => {
+  // onCreated 에서 판정 불가 → onChanged 에서 filename 확정 → 일반 zip 이면 인터셉트 포기
+  assert.equal(
+    shouldInterceptDownload({
+      id: 3,
+      filename: 'a.zip',
+      url: 'https://example.com/download?id=123',
     }),
     false,
   );
