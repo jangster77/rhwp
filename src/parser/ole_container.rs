@@ -6,6 +6,26 @@
 use cfb::CompoundFile;
 use std::io::{Cursor, Read};
 
+/// OLE 컨테이너에서 추출한 네이티브 이미지 종류
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NativeImageKind {
+    Bmp,
+    Png,
+    Jpeg,
+    Gif,
+}
+
+impl NativeImageKind {
+    pub fn mime(&self) -> &'static str {
+        match self {
+            Self::Bmp => "image/bmp",
+            Self::Png => "image/png",
+            Self::Jpeg => "image/jpeg",
+            Self::Gif => "image/gif",
+        }
+    }
+}
+
 /// OLE 컨테이너 내용
 #[derive(Debug, Clone, Default)]
 pub struct OleContainer {
@@ -15,6 +35,8 @@ pub struct OleContainer {
     pub ooxml_chart: Option<Vec<u8>>,
     /// `Contents` 원본 바이트 (내부 OLE 데이터)
     pub raw_contents: Option<Vec<u8>>,
+    /// `\x01Ole10Native` 스트림에서 추출한 네이티브 임베딩 바이트 (BMP/PNG/JPEG 등)
+    pub native_image: Option<(NativeImageKind, Vec<u8>)>,
 }
 
 impl OleContainer {
@@ -72,14 +94,120 @@ pub fn parse_ole_container(cfb_bytes: &[u8]) -> Option<OleContainer> {
                     container.raw_contents = Some(buf);
                 }
             }
+        } else if name == "\u{0001}Ole10Native" || name.ends_with("Ole10Native") {
+            if let Ok(mut s) = comp.open_stream(&path) {
+                let mut buf = Vec::new();
+                if s.read_to_end(&mut buf).is_ok() && buf.len() > 4 {
+                    // Ole10Native: [u32 LE length][payload] — payload가 BMP/PNG/JPEG 등 네이티브 바이트
+                    let inner = &buf[4..];
+                    if let Some(img) = detect_native_image(inner) {
+                        container.native_image = Some(img);
+                    }
+                }
+            }
         }
     }
 
-    if container.preview_emf.is_some() || container.ooxml_chart.is_some() || container.raw_contents.is_some() {
+    // preview_emf가 없으면 OlePres000에서 DIB 추출 시도 → BMP로 포장
+    if container.preview_emf.is_none() && container.native_image.is_none() {
+        // OlePres000을 다시 읽어 DIB 헤더를 찾아본다
+        // (이미 preview_emf가 None인 경우만)
+        if let Ok(entries) = std::panic::catch_unwind(|| {
+            let cursor = Cursor::new(cfb_bytes);
+            CompoundFile::open(cursor).ok().map(|mut comp| {
+                comp.walk().filter(|e| e.is_stream())
+                    .map(|e| e.path().to_string_lossy().to_string())
+                    .collect::<Vec<_>>()
+            })
+        }) {
+            if let Some(Some(paths)) = Some(entries) {
+                let cursor = Cursor::new(cfb_bytes);
+                if let Ok(mut comp2) = CompoundFile::open(cursor) {
+                    for path in &paths {
+                        let name = path.trim_start_matches('/');
+                        if name == "\u{0002}OlePres000" || name.ends_with("OlePres000") {
+                            if let Ok(mut s) = comp2.open_stream(path) {
+                                let mut buf = Vec::new();
+                                if s.read_to_end(&mut buf).is_ok() {
+                                    if let Some(bmp) = extract_dib_as_bmp(&buf) {
+                                        container.native_image = Some((NativeImageKind::Bmp, bmp));
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if container.preview_emf.is_some()
+        || container.ooxml_chart.is_some()
+        || container.raw_contents.is_some()
+        || container.native_image.is_some()
+    {
         Some(container)
     } else {
         None
     }
+}
+
+/// 바이트 슬라이스의 선두 매직으로 이미지 포맷을 판별
+pub fn detect_native_image(data: &[u8]) -> Option<(NativeImageKind, Vec<u8>)> {
+    if data.len() < 4 { return None; }
+    if data.starts_with(b"BM") {
+        return Some((NativeImageKind::Bmp, data.to_vec()));
+    }
+    if data.starts_with(&[0x89, 0x50, 0x4E, 0x47]) {
+        return Some((NativeImageKind::Png, data.to_vec()));
+    }
+    if data.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        return Some((NativeImageKind::Jpeg, data.to_vec()));
+    }
+    if data.starts_with(b"GIF8") {
+        return Some((NativeImageKind::Gif, data.to_vec()));
+    }
+    None
+}
+
+/// OlePres000 스트림에서 DIB(Device Independent Bitmap) 데이터를 찾아 BMP 파일 바이트로 재포장한다.
+///
+/// DIB 시그니처: BITMAPINFOHEADER는 `biSize=40` (0x28 0x00 0x00 0x00)로 시작.
+/// 앞에 BMP FILEHEADER(14바이트, "BM"+파일크기+예약+픽셀오프셋)를 합성하여 표준 BMP로 만든다.
+fn extract_dib_as_bmp(data: &[u8]) -> Option<Vec<u8>> {
+    let scan_limit = data.len().min(4096);
+    for i in 0..scan_limit.saturating_sub(40) {
+        // BITMAPINFOHEADER.biSize == 40
+        let bi_size = u32::from_le_bytes([data[i], data[i+1], data[i+2], data[i+3]]);
+        if bi_size != 40 { continue; }
+        // 유효성: width/height가 현실적인 범위
+        let w = i32::from_le_bytes([data[i+4], data[i+5], data[i+6], data[i+7]]);
+        let h = i32::from_le_bytes([data[i+8], data[i+9], data[i+10], data[i+11]]);
+        if w <= 0 || w > 100_000 || h.abs() == 0 || h.abs() > 100_000 { continue; }
+        let bit_count = u16::from_le_bytes([data[i+14], data[i+15]]);
+        if !matches!(bit_count, 1 | 4 | 8 | 16 | 24 | 32) { continue; }
+        let compression = u32::from_le_bytes([data[i+16], data[i+17], data[i+18], data[i+19]]);
+        // 색상 테이블 크기 계산
+        let clr_used = u32::from_le_bytes([data[i+32], data[i+33], data[i+34], data[i+35]]);
+        let palette_entries = if bit_count <= 8 {
+            if clr_used > 0 && clr_used <= 256 { clr_used } else { 1u32 << bit_count }
+        } else { 0 };
+        let palette_bytes = palette_entries * 4;
+        let dib_and_data = &data[i..];
+        let offset_to_pixels = 14 + 40 + palette_bytes as usize;
+        // 파일 전체 크기 = 14 헤더 + DIB 나머지
+        let file_size = 14 + dib_and_data.len() as u32;
+        let mut bmp = Vec::with_capacity(file_size as usize);
+        bmp.extend_from_slice(b"BM");
+        bmp.extend_from_slice(&file_size.to_le_bytes());
+        bmp.extend_from_slice(&[0u8; 4]); // reserved
+        bmp.extend_from_slice(&(offset_to_pixels as u32).to_le_bytes());
+        bmp.extend_from_slice(dib_and_data);
+        let _ = compression;
+        return Some(bmp);
+    }
+    None
 }
 
 /// OLE Presentation Stream 헤더를 스킵하고 내부 EMF/메타파일 바이트를 반환한다.

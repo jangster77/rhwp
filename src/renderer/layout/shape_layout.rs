@@ -1039,6 +1039,29 @@ impl LayoutEngine {
                                 }
                             }
                         }
+
+                        // 네이티브 임베딩 이미지(BMP/PNG/JPEG/GIF) 폴백
+                        if !rendered {
+                            if let Some((kind, bytes)) = container.native_image.as_ref() {
+                                use base64::Engine;
+                                let b64 = base64::engine::general_purpose::STANDARD.encode(bytes);
+                                let href = format!("data:{};base64,{}", kind.mime(), b64);
+                                let svg_fragment = format!(
+                                    "<image x=\"{:.2}\" y=\"{:.2}\" width=\"{:.2}\" height=\"{:.2}\" preserveAspectRatio=\"xMidYMid meet\" xlink:href=\"{}\" href=\"{}\"/>",
+                                    render_x, render_y, render_w, render_h, href, href
+                                );
+                                let node_id = tree.next_id();
+                                let node = RenderNode::new(
+                                    node_id,
+                                    RenderNodeType::RawSvg(crate::renderer::render_tree::RawSvgNode {
+                                        svg: svg_fragment,
+                                    }),
+                                    BoundingBox::new(render_x, render_y, render_w, render_h),
+                                );
+                                parent.children.push(node);
+                                rendered = true;
+                            }
+                        }
                     }
                     } // !rendered (CFB path)
                 }
