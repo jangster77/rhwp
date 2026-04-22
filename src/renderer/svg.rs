@@ -1734,8 +1734,10 @@ impl Renderer for SvgRenderer {
         self.overlay_table_bounds.clear();
         self.overlay_skip_depth = 0;
         self.overlay_page_section = -1;
+        // xmlns:xlink 필수: SVG 가 <img> 로 로드될 때(예: blob URL 미리보기)
+        // 엄격한 XML 파싱으로 인해 xmlns:xlink 미선언 시 <image xlink:href=...> 가 무시됨.
         self.output.push_str(&format!(
-            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{}\" height=\"{}\" viewBox=\"0 0 {} {}\">\n",
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" width=\"{}\" height=\"{}\" viewBox=\"0 0 {} {}\">\n",
             width, height, width, height,
         ));
         self.defs_insert_pos = self.output.len();
