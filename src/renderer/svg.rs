@@ -1761,6 +1761,11 @@ impl Renderer for SvgRenderer {
     }
 
     fn draw_text(&mut self, text: &str, x: f64, y: f64, style: &TextStyle) {
+        // PUA 문자(U+F000~F0FF, Wingdings 등 심볼 폰트)를 유니코드 표준 문자로 변환
+        let text = &text.chars().map(|ch| {
+            crate::renderer::layout::map_pua_bullet_char(ch)
+        }).collect::<String>();
+
         let color = color_to_svg(style.color);
         let font_size = if style.font_size > 0.0 { style.font_size } else { 12.0 };
         let font_family = if style.font_family.is_empty() {
