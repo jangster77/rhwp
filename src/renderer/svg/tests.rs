@@ -147,3 +147,47 @@ fn test_color_to_svg() {
     assert_eq!(color_to_svg(0x00FFFFFF), "#ffffff");
 }
 
+
+/// 최소 2x2 BI_RGB 32-bit BMP를 생성한다 (테스트용).
+fn make_minimal_bmp_2x2() -> Vec<u8> {
+    // BMP 파일 헤더 (14B): "BM" + file_size + 0 + data_offset(54)
+    // DIB 헤더 (BITMAPINFOHEADER 40B): w=2, h=2, planes=1, bpp=32, BI_RGB, size=16
+    // 픽셀 데이터: 2*2*4 = 16B (BGRA)
+    let pixels: [u8; 16] = [
+        0xFF, 0x00, 0x00, 0xFF,  0x00, 0xFF, 0x00, 0xFF, // row 0 (아래→위 저장)
+        0x00, 0x00, 0xFF, 0xFF,  0xFF, 0xFF, 0xFF, 0xFF, // row 1
+    ];
+    let file_size: u32 = 14 + 40 + 16;
+    let mut v = Vec::new();
+    v.extend_from_slice(b"BM");
+    v.extend_from_slice(&file_size.to_le_bytes());
+    v.extend_from_slice(&[0, 0, 0, 0]);
+    v.extend_from_slice(&54u32.to_le_bytes());
+    v.extend_from_slice(&40u32.to_le_bytes());          // DIB size
+    v.extend_from_slice(&2i32.to_le_bytes());           // width
+    v.extend_from_slice(&2i32.to_le_bytes());           // height
+    v.extend_from_slice(&1u16.to_le_bytes());           // planes
+    v.extend_from_slice(&32u16.to_le_bytes());          // bpp
+    v.extend_from_slice(&0u32.to_le_bytes());           // BI_RGB
+    v.extend_from_slice(&16u32.to_le_bytes());          // image size
+    v.extend_from_slice(&[0, 0, 0, 0]);                 // x ppm
+    v.extend_from_slice(&[0, 0, 0, 0]);                 // y ppm
+    v.extend_from_slice(&[0, 0, 0, 0]);                 // colors used
+    v.extend_from_slice(&[0, 0, 0, 0]);                 // important colors
+    v.extend_from_slice(&pixels);
+    v
+}
+
+#[test]
+fn test_bmp_to_png_success() {
+    let bmp = make_minimal_bmp_2x2();
+    let png = bmp_bytes_to_png_bytes(&bmp).expect("BMP->PNG 변환 실패");
+    // PNG 시그니처: 89 50 4E 47 0D 0A 1A 0A
+    assert!(png.starts_with(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]));
+}
+
+#[test]
+fn test_bmp_to_png_invalid_returns_none() {
+    let junk = vec![0u8; 32];
+    assert!(bmp_bytes_to_png_bytes(&junk).is_none());
+}

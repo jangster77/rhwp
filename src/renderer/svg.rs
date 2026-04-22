@@ -159,9 +159,19 @@ impl SvgRenderer {
                 }
                 // 이미지 (최상위)
                 if let Some(img) = &bg.image {
-                    let base64_data = base64::engine::general_purpose::STANDARD.encode(&img.data);
-                    let mime_type = detect_image_mime_type(&img.data);
-                    let data_uri = format!("data:{};base64,{}", mime_type, base64_data);
+                    let detected_mime = detect_image_mime_type(&img.data);
+                    // BMP → PNG 재인코딩 (브라우저 호환성)
+                    let (render_bytes, render_mime): (std::borrow::Cow<[u8]>, &str) =
+                        if detected_mime == "image/bmp" {
+                            match bmp_bytes_to_png_bytes(&img.data) {
+                                Some(png) => (std::borrow::Cow::Owned(png), "image/png"),
+                                None => (std::borrow::Cow::Borrowed(img.data.as_slice()), detected_mime),
+                            }
+                        } else {
+                            (std::borrow::Cow::Borrowed(img.data.as_slice()), detected_mime)
+                        };
+                    let base64_data = base64::engine::general_purpose::STANDARD.encode(&*render_bytes);
+                    let data_uri = format!("data:{};base64,{}", render_mime, base64_data);
                     self.output.push_str(&format!(
                         "<image x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" preserveAspectRatio=\"none\" href=\"{}\"/>\n",
                         node.bbox.x, node.bbox.y,
@@ -1025,9 +1035,15 @@ impl SvgRenderer {
         let mime_type = detect_image_mime_type(data);
 
         // WMF → SVG 변환 (브라우저는 WMF를 렌더링할 수 없으므로 SVG로 변환)
+        // BMP → PNG 변환 (브라우저는 SVG <image> 내부의 data:image/bmp 미지원)
         let (render_data, render_mime): (std::borrow::Cow<[u8]>, &str) = if mime_type == "image/x-wmf" {
             match convert_wmf_to_svg(data) {
                 Some(svg_bytes) => (std::borrow::Cow::Owned(svg_bytes), "image/svg+xml"),
+                None => (std::borrow::Cow::Borrowed(data), mime_type),
+            }
+        } else if mime_type == "image/bmp" {
+            match bmp_bytes_to_png_bytes(data) {
+                Some(png_bytes) => (std::borrow::Cow::Owned(png_bytes), "image/png"),
                 None => (std::borrow::Cow::Borrowed(data), mime_type),
             }
         } else {
@@ -2089,6 +2105,19 @@ pub(crate) fn convert_wmf_to_svg(data: &[u8]) -> Option<Vec<u8>> {
     let player = SVGPlayer::new();
     let converter = WMFConverter::new(data, player);
     converter.run().ok()
+}
+
+/// BMP 바이트를 PNG 바이트로 재인코딩한다. 실패 시 None 반환.
+///
+/// 브라우저는 SVG `<image>` 내부의 `data:image/bmp` URI를 표준 지원하지 않으므로,
+/// SVG 임베딩 전에 PNG로 변환해 호환성을 확보한다.
+pub(crate) fn bmp_bytes_to_png_bytes(data: &[u8]) -> Option<Vec<u8>> {
+    use image::{ImageFormat, load_from_memory_with_format};
+    use std::io::Cursor;
+    let img = load_from_memory_with_format(data, ImageFormat::Bmp).ok()?;
+    let mut out = Vec::new();
+    img.write_to(&mut Cursor::new(&mut out), ImageFormat::Png).ok()?;
+    Some(out)
 }
 
 /// 이미지 데이터에서 MIME 타입 감지
