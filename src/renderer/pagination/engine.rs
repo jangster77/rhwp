@@ -1106,7 +1106,12 @@ impl Paginator {
             // 피트 판단식: current_height + effective_table_height <= available
             // 이를 만족하도록 effective_table_height = abs_bottom - current_height
             let abs_bottom = para_start_height + v_off + effective_height + host_spacing;
-            (abs_bottom - st.current_height).max(effective_height + host_spacing)
+            if abs_bottom <= base_available_height + 0.5 {
+                // 표가 body 범위 내에 완전히 들어옴 → flow height 기여 없음
+                0.0
+            } else {
+                (abs_bottom - st.current_height).max(effective_height + host_spacing)
+            }
         } else {
             table_total_height
         };

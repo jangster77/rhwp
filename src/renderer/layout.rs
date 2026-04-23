@@ -1445,10 +1445,30 @@ impl LayoutEngine {
             // 표/Shape 처리 후 vpos 기준점 무효화
             // 표/Shape의 LINE_SEG lh는 개체 높이를 포함하여 실제 렌더링 높이와 다르므로
             // vpos 누적이 순차 y_offset과 drift를 일으킴 → 기준점 재산출 필요
-            // TAC/비-TAC 모두 해당 (비-TAC 표도 vpos에 표 높이가 포함됨)
+            // 예외: Para-relative float 표(vert=Para, TopAndBottom, non-TAC)는
+            // 앵커 문단에 attach되므로 후속 문단의 vpos 교정 기준점을 초기화하면 안 됨.
+            // 초기화하면 한컴이 Para-float 기준으로 기록한 후속 문단 vpos가 잘못된
+            // lazy_base로 교정되어 앵커 y가 상승 → body_bottom clamp → LAYOUT_OVERFLOW.
             let is_table_or_shape = matches!(item,
                 PageItem::Table { .. } | PageItem::PartialTable { .. } | PageItem::Shape { .. });
-            if was_tac || is_table_or_shape {
+            let is_para_float_table = if let PageItem::Table { para_index, control_index } = item {
+                paragraphs
+                    .get(*para_index)
+                    .and_then(|p| p.controls.get(*control_index))
+                    .map(|c| {
+                        matches!(
+                            c,
+                            Control::Table(t)
+                            if !t.common.treat_as_char
+                                && matches!(t.common.text_wrap, crate::model::shape::TextWrap::TopAndBottom)
+                                && matches!(t.common.vert_rel_to, VertRelTo::Para)
+                        )
+                    })
+                    .unwrap_or(false)
+            } else {
+                false
+            };
+            if was_tac || (is_table_or_shape && !is_para_float_table) {
                 vpos_page_base = None;
                 vpos_lazy_base = None;
             }

@@ -92,6 +92,12 @@ fn table_text_page_0() {
     check_snapshot("samples/hwpx/table-text.hwpx", 0, "table-text/page-0");
 }
 
+/// Issue #157: 비-TAC wrap=위아래 표 out-of-flow 배치 — 표가 텍스트와 중첩되지 않음
+#[test]
+fn issue_157_page_1() {
+    check_snapshot("samples/hwpx/issue_157.hwpx", 1, "issue-157/page-1");
+}
+
 /// Determinism probe: render the same page twice in one process and assert
 /// byte-for-byte equality. If this ever fails, the snapshot tests above
 /// are unreliable regardless of golden correctness.
