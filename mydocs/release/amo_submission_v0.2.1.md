@@ -13,9 +13,10 @@
 - [x] gecko id: `rhwp@edwardkim.github.io`
 - [x] strict_min_version: `112.0`
 - [x] **data_collection_permissions: required ["none"]** — AMO 필수 (아래 주의 참조)
+- [x] **gecko_android.strict_min_version: "999.0"** — Firefox Android 옵트아웃 (아래 "Android 미지원 선언" 참조)
 - [x] 클린 재빌드 (`rm -rf dist && npm run build`)
 - [x] symlink dereference 검증 (`download-interceptor-common.js` 실체 파일)
-- [x] `web-ext lint` errors 0 / notices 0 / warnings 22 (표준 패턴 + gecko 호환 경고 2건 · 아래 주의 참조)
+- [x] `web-ext lint` errors 0 / notices 0 / warnings 21 (표준 패턴 + gecko 호환 경고 1건)
 - [x] zip 패키징
 - [ ] AMO Developer Hub 계정 준비
 - [ ] 스크린샷 1280x800 (최소 1장)
@@ -26,11 +27,29 @@
 
 2026-04-23 실측:
 
-- `web-ext lint` 는 이 키가 Firefox 140+ 에서만 지원된다는 이유로 **경고 2건** 을 낸다 (`KEY_FIREFOX_UNSUPPORTED_BY_MIN_VERSION` · `KEY_FIREFOX_ANDROID_UNSUPPORTED_BY_MIN_VERSION`).
+- `web-ext lint` 는 이 키가 Firefox 140+ 에서만 지원된다는 이유로 **경고 1건** 을 낸다 (`KEY_FIREFOX_UNSUPPORTED_BY_MIN_VERSION`). Android 경고는 gecko_android 옵트아웃으로 해소.
 - 그러나 **AMO 서버 검증은 이 키를 필수** 로 요구한다:
   > The "/browser_specific_settings/gecko/data_collection_permissions" property is required for all new Firefox extensions, and will be required for new versions of existing extensions in the future.
-- 결론: AMO 서버 요구사항이 우선. 키를 포함하고 lint 경고 2건은 수용.
+- 결론: AMO 서버 요구사항이 우선. 키를 포함하고 lint 경고는 수용.
 - 참고: https://mzl.la/firefox-builtin-data-consent
+
+### ⚠️ Android 미지원 선언 (`gecko_android.strict_min_version: "999.0"`)
+
+**배경**: 2026-04-23 Firefox Android 호환성 감사 결과, rhwp 의 핵심 API 2개가 Android 에서 동작 안 함이 확인됨:
+
+| API | rhwp 사용처 | Android 지원 |
+|-----|------------|-------------|
+| `browser.downloads.onCreated/onChanged` | 다운로드 가로채기 (핵심 기능) | **Firefox Android v79 에서 제거됨** — 현재 불가 |
+| `browser.contextMenus` | 우클릭 "rhwp로 열기" | **지원 안 됨** (MDN BCD: `version_added: false`) |
+
+이 두 기능이 없으면 rhwp 는 사실상 Android 에서 쓸모가 없다 (배지 자동 감지만 남는데 링크 클릭 시 가로채기가 안 되어 의미 없음).
+
+**선제 옵트아웃 방식**: `browser_specific_settings.gecko_android.strict_min_version` 을 사실상 도달 불가능한 버전(`999.0`) 으로 설정 → AMO 가 Android 사용자에게 이 확장을 노출하지 않음 → 나쁜 사용자 경험 · 낮은 평점 예방.
+
+**Android 지원 재검토 시점**:
+- Mozilla 가 Firefox Android 에서 `downloads` · `contextMenus` API 를 복원할 때
+- 또는 rhwp 가 Android 전용 대체 경로 (예: 파일 선택 UI 기반) 를 구현할 때
+- 현재는 별도 이슈로 기록만 (AMO 승인 후 고려)
 
 ## 2. 등록 메타 (사용자 노출)
 
