@@ -41,6 +41,8 @@ pub enum FileFormat {
     Hwp,
     /// HWPX (XML 기반, ZIP 컨테이너)
     Hwpx,
+    /// HWP 3.0 바이너리 (미지원 — 감지만, Issue #265)
+    Hwp3,
     /// 알 수 없는 포맷
     Unknown,
 }
@@ -57,6 +59,11 @@ pub fn detect_format(data: &[u8]) -> FileFormat {
             return FileFormat::Hwpx;
         }
     }
+    // HWP 3.0 바이너리 (Issue #265): "HWP Document File" 프리픽스.
+    // V3.00 ~ 2.x/초기 한컴 워디안까지 관대하게 포괄.
+    if data.len() >= 17 && &data[0..17] == b"HWP Document File" {
+        return FileFormat::Hwp3;
+    }
     FileFormat::Unknown
 }
 
@@ -70,6 +77,8 @@ pub enum ParseError {
     CryptoError(crypto::CryptoError),
     HwpxError(hwpx::HwpxError),
     EncryptedDocument,
+    /// 감지는 되었으나 지원하지 않는 포맷 (Issue #265)
+    UnsupportedFormat { format: &'static str, hint: &'static str },
 }
 
 impl std::fmt::Display for ParseError {
@@ -82,6 +91,8 @@ impl std::fmt::Display for ParseError {
             ParseError::CryptoError(e) => write!(f, "암호 오류: {}", e),
             ParseError::HwpxError(e) => write!(f, "HWPX 오류: {}", e),
             ParseError::EncryptedDocument => write!(f, "암호화된 문서는 지원하지 않습니다"),
+            ParseError::UnsupportedFormat { format, hint } =>
+                write!(f, "지원하지 않는 포맷입니다: {format}. {hint}"),
         }
     }
 }
@@ -520,6 +531,12 @@ impl DocumentParser for HwpxParser {
 pub fn parse_document(data: &[u8]) -> Result<Document, ParseError> {
     match detect_format(data) {
         FileFormat::Hwpx => HwpxParser.parse(data),
+        FileFormat::Hwp3 => Err(ParseError::UnsupportedFormat {
+            format: "HWP 3.0",
+            hint: "현재 rhwp 는 HWP 5.0 과 HWPX 만 지원합니다. \
+                   한컴오피스 또는 LibreOffice 에서 파일을 연 뒤 \
+                   HWP 5.0 포맷으로 다시 저장하여 시도해주세요.",
+        }),
         _ => HwpParser.parse(data),
     }
 }
@@ -799,6 +816,27 @@ mod tests {
     }
 
     #[test]
+    fn test_detect_format_hwp3() {
+        // Issue #265: HWP 3.0 바이너리 시그니처
+        let hwp3_header = b"HWP Document File V3.00 \x1a\x01\x02\x03\x04\x05\x00\x00";
+        assert_eq!(detect_format(hwp3_header), FileFormat::Hwp3);
+    }
+
+    #[test]
+    fn test_detect_format_hwp3_exact_17_bytes() {
+        // 경계: 정확히 17바이트 "HWP Document File" 로 감지
+        let exact = b"HWP Document File";
+        assert_eq!(detect_format(exact), FileFormat::Hwp3);
+    }
+
+    #[test]
+    fn test_detect_format_hwp3_too_short() {
+        // 17바이트 미만이면 감지 불가 (Unknown)
+        let short = b"HWP Document Fil"; // 16바이트
+        assert_eq!(detect_format(short), FileFormat::Unknown);
+    }
+
+    #[test]
     fn test_parse_document_dispatches_hwp() {
         // CFB 시그니처 → HwpParser 경로로 디스패치
         let result = parse_document(&[0xD0, 0xCF, 0x11, 0xE0, 0x00, 0x00, 0x00, 0x00]);
@@ -810,6 +848,34 @@ mod tests {
         // ZIP 시그니처 → HwpxParser 경로로 디스패치
         let result = parse_document(&[0x50, 0x4B, 0x03, 0x04, 0x00, 0x00, 0x00, 0x00]);
         assert!(result.is_err()); // 유효하지 않은 ZIP이므로 에러
+    }
+
+    #[test]
+    fn test_parse_document_hwp3_returns_unsupported_error() {
+        // Issue #265: HWP 3.0 헤더 → UnsupportedFormat 에러
+        let hwp3_header = b"HWP Document File V3.00 \x1a\x01\x02\x03\x04\x05";
+        let err = parse_document(hwp3_header).unwrap_err();
+        match err {
+            ParseError::UnsupportedFormat { format, hint } => {
+                assert_eq!(format, "HWP 3.0");
+                assert!(hint.contains("HWP 5.0"));
+            }
+            other => panic!("expected UnsupportedFormat, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_document_issue_265_sample() {
+        // Issue #265: 실제 제보 파일 samples/issue_265.hwp 가 HWP 3.0 으로
+        // 감지되고 친절한 에러 메시지를 반환하는지 확인.
+        let data = std::fs::read("samples/issue_265.hwp")
+            .expect("samples/issue_265.hwp should exist in repo");
+        assert_eq!(detect_format(&data), FileFormat::Hwp3);
+        let err = parse_document(&data).unwrap_err();
+        assert!(matches!(err, ParseError::UnsupportedFormat { .. }));
+        let msg = format!("{err}");
+        assert!(msg.contains("HWP 3.0"), "message should mention HWP 3.0: {msg}");
+        assert!(msg.contains("HWP 5.0"), "message should mention HWP 5.0: {msg}");
     }
 
     #[test]

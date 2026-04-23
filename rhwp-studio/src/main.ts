@@ -460,11 +460,7 @@ async function loadFile(file: File): Promise<void> {
     const data = new Uint8Array(await file.arrayBuffer());
     await loadBytes(data, file.name, null, startTime);
   } catch (error) {
-    const errMsg = `파일 로드 실패: ${error}`;
-    msg.textContent = errMsg;
-    console.error('[main] 파일 로드 실패:', error);
-    // 모바일에서 상태 메시지가 숨겨질 수 있으므로 alert으로도 표시
-    if (window.innerWidth < 768) alert(errMsg);
+    showLoadError(error);
   }
 }
 
@@ -529,7 +525,12 @@ eventBus.on('open-document-bytes', async (payload) => {
     fileName: string;
     fileHandle: typeof wasm.currentFileHandle;
   };
-  await loadBytes(data.bytes, data.fileName, data.fileHandle);
+  try {
+    await loadBytes(data.bytes, data.fileName, data.fileHandle);
+  } catch (error) {
+    // #265: WASM 파서 에러 (예: HWP 3.0 미지원) 를 사용자에게 전파
+    showLoadError(error);
+  }
 });
 
 // 수식 더블클릭 → 수식 편집 대화상자
@@ -578,10 +579,28 @@ async function loadFromUrlParam(): Promise<void> {
     const docInfo = wasm.loadDocument(data, fileName);
     await initializeDocument(docInfo, `${fileName} — ${docInfo.pageCount}페이지`);
   } catch (error) {
-    const errMsg = `파일 로드 실패: ${error}`;
-    msg.textContent = errMsg;
-    console.error('[loadFromUrlParam]', error);
+    showLoadError(error);
   }
+}
+
+/**
+ * 파일 로드 실패 시 사용자에게 에러를 명확히 알린다 (#265).
+ *
+ * 상태 표시줄은 22px 한 줄로 긴 에러 메시지가 ellipsis 로 잘리므로,
+ * 우상단 토스트 (긴 메시지 줄바꿈 지원 · 사용자 닫기 · action 링크) 를
+ * 병행 사용한다.
+ */
+function showLoadError(error: unknown): void {
+  const raw = String(error).replace(/^Error:\s*/, '');
+  const errMsg = `파일 로드 실패: ${raw}`;
+  const sb = sbMessage();
+  if (sb) sb.textContent = errMsg;
+  console.error('[main] 파일 로드 실패:', error);
+  showToast({
+    message: errMsg,
+    durationMs: 0, // 에러는 자동 페이드 없음 — 사용자가 읽고 닫기
+    confirmLabel: '확인',
+  });
 }
 
 initialize();
