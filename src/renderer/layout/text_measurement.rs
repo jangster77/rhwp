@@ -181,7 +181,16 @@ impl TextMeasurer for EmbeddedTextMeasurer {
             }
             let base_w = if let Some(w) = measure_char_width_embedded(&style.font_family, style.bold, style.italic, c, font_size) {
                 w
-            } else if cluster_len[i] > 1 || is_cjk_char(c) || is_fullwidth_symbol(c) { font_size } else { font_size * 0.5 };
+            } else if cluster_len[i] > 1 || is_cjk_char(c) || is_fullwidth_symbol(c) {
+                font_size
+            } else if is_narrow_punctuation(c) {
+                // Task #257: 콤마·중점 등은 실제 글리프 폭이 반각보다 뚜렷이
+                // 좁음. 폴백 경로에서 font_size * 0.5 를 쓰면 PDF 대비 뒤
+                // 글자가 2~3px 우측으로 밀림. 0.3 으로 분기.
+                font_size * 0.3
+            } else {
+                font_size * 0.5
+            };
             let mut w = base_w * ratio + style.letter_spacing + style.extra_char_spacing;
             if c == ' ' { w += style.extra_word_spacing; }
             // 음수 자간(letter_spacing + extra_char_spacing < 0) 시
@@ -275,7 +284,14 @@ impl TextMeasurer for EmbeddedTextMeasurer {
             }
             let base_w = if let Some(w) = measure_char_width_embedded(&style.font_family, style.bold, style.italic, c, font_size) {
                 w
-            } else if cluster_len[i] > 1 || is_cjk_char(c) || is_fullwidth_symbol(c) { font_size } else { font_size * 0.5 };
+            } else if cluster_len[i] > 1 || is_cjk_char(c) || is_fullwidth_symbol(c) {
+                font_size
+            } else if is_narrow_punctuation(c) {
+                // Task #257: 콤마·중점 등 narrow glyph 폴백 폭 (0.5 → 0.3).
+                font_size * 0.3
+            } else {
+                font_size * 0.5
+            };
             let mut w = base_w * ratio + style.letter_spacing + style.extra_char_spacing;
             if c == ' ' { w += style.extra_word_spacing; }
             // 음수 자간(letter_spacing + extra_char_spacing < 0) 시 per-char 최소
@@ -790,7 +806,14 @@ pub(crate) fn estimate_text_width_unrounded(text: &str, style: &TextStyle) -> f6
         }
         let base_w = if let Some(w) = measure_char_width_embedded(&style.font_family, style.bold, style.italic, c, font_size) {
             w
-        } else if cluster_len[i] > 1 || is_cjk_char(c) || is_fullwidth_symbol(c) { font_size } else { font_size * 0.5 };
+        } else if cluster_len[i] > 1 || is_cjk_char(c) || is_fullwidth_symbol(c) {
+            font_size
+        } else if is_narrow_punctuation(c) {
+            // Task #257: 콤마·중점 등 narrow glyph 폴백 폭 (0.5 → 0.3).
+            font_size * 0.3
+        } else {
+            font_size * 0.5
+        };
         let mut w = base_w * ratio + style.letter_spacing + style.extra_char_spacing;
         if c == ' ' { w += style.extra_word_spacing; }
         // 음수 자간(letter_spacing + extra_char_spacing < 0) 시
@@ -839,6 +862,16 @@ pub(crate) fn is_cjk_char(c: char) -> bool {
     || ('\u{F900}'..='\u{FAFF}').contains(&c) // CJK Compatibility
     || ('\u{3040}'..='\u{30FF}').contains(&c) // 히라가나/카타카나
     || ('\u{FF00}'..='\u{FFEF}').contains(&c) // 전각 문자
+}
+
+/// 실제 글리프 폭이 반각(em/2)보다 뚜렷이 좁은 구두점·기호.
+/// 메트릭 DB 미등록 폰트의 폴백 폭 계산 시 `font_size * 0.5` 대신
+/// `font_size * 0.3` 을 쓰도록 분기하는 기준 (Task #257).
+fn is_narrow_punctuation(c: char) -> bool {
+    matches!(c,
+        ',' | '.' | ':' | ';' | '\'' | '"' | '`' |
+        '\u{00B7}'   // · MIDDLE DOT
+    )
 }
 
 /// 한컴이 전각으로 처리하는 기호 (메트릭 폴백 시 font_size 사용)
@@ -1261,7 +1294,6 @@ mod tests {
     // 통과시킨다.
 
     #[test]
-    #[ignore = "Task #257 단계2에서 활성화: base_w narrow glyph 분기 추가 후 통과"]
     fn test_narrow_glyph_comma_base_width() {
         let m = EmbeddedTextMeasurer;
         // HY헤드라인M 은 메트릭 DB 미등록 → fallback 경로
@@ -1282,7 +1314,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Task #257 단계2에서 활성화"]
     fn test_narrow_glyph_middle_dot_base_width() {
         let m = EmbeddedTextMeasurer;
         let style = TextStyle {
@@ -1301,7 +1332,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Task #257 단계2에서 활성화"]
     fn test_narrow_glyph_period_and_colon() {
         let m = EmbeddedTextMeasurer;
         let style = TextStyle {
@@ -1322,7 +1352,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Task #257 단계2에서 활성화"]
     fn test_non_narrow_char_unchanged() {
         // 회귀 방어: 영문 'A'·한글 '가' 는 narrow 분기에 해당하지 않아야 한다.
         let m = EmbeddedTextMeasurer;
