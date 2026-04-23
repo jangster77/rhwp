@@ -1166,6 +1166,11 @@ impl Renderer for WebCanvasRenderer {
     }
 
     fn draw_text(&mut self, text: &str, x: f64, y: f64, style: &TextStyle) {
+        // PUA 문자(U+F000~F0FF, Wingdings 등 심볼 폰트)를 유니코드 표준 문자로 변환
+        let text = &text.chars().map(|ch| {
+            crate::renderer::layout::map_pua_bullet_char(ch)
+        }).collect::<String>();
+
         // 글꼴 설정
         let font_weight = if style.bold { "bold " } else { "" };
         let font_style = if style.italic { "italic " } else { "" };

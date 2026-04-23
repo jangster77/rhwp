@@ -2223,11 +2223,13 @@ impl LayoutEngine {
         }
 
         // 문단 테두리/배경 범위 수집 (build_single_column에서 연속 그룹으로 병합 렌더링)
+        // margin_left/margin_right를 반영하여 박스 위치·폭 조정
         if para_border_fill_id > 0 {
             let bg_height = y - bg_y_start;
             if bg_height > 0.0 {
+                // margin_left/margin_right는 이미 px 단위 (style_resolver에서 변환됨)
                 self.para_border_ranges.borrow_mut().push(
-                    (para_border_fill_id, col_area.x, bg_y_start, col_area.width, y)
+                    (para_border_fill_id, col_area.x + margin_left, bg_y_start, col_area.width - margin_left - margin_right, y)
                 );
             }
         }

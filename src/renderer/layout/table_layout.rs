@@ -332,6 +332,67 @@ impl LayoutEngine {
             split_row_range, row_y_shift,
         );
 
+
+        // ── 5-1. 표 전체 외곽 테두리 보충 ──
+        // 셀 테두리만으로는 표 외곽이 비어있을 수 있음.
+        // 셀이 해당 외곽 엣지를 커버하지 않는 곳에만 table.border_fill_id fallback 적용.
+        // (셀이 존재하지만 의도적으로 테두리를 없앤 곳에는 적용하지 않음)
+        if table.border_fill_id > 0 {
+            let tbl_idx = (table.border_fill_id as usize).saturating_sub(1);
+            if let Some(tbl_bs) = styles.border_styles.get(tbl_idx) {
+                let borders = &tbl_bs.borders; // [left, right, top, bottom]
+
+                // 셀이 커버하는 외곽 엣지 맵 구축
+                let mut h_covered = vec![vec![false; col_count]; row_count + 1];
+                let mut v_covered = vec![vec![false; row_count]; col_count + 1];
+                for cell in &table.cells {
+                    let c = cell.col as usize;
+                    let r = cell.row as usize;
+                    if c >= col_count || r >= row_count { continue; }
+                    let ec = (c + cell.col_span as usize).min(col_count);
+                    let er = (r + cell.row_span as usize).min(row_count);
+                    // 상단
+                    if r == 0 { for cc in c..ec { h_covered[0][cc] = true; } }
+                    // 하단
+                    if er == row_count { for cc in c..ec { h_covered[row_count][cc] = true; } }
+                    // 좌측
+                    if c == 0 { for rr in r..er { v_covered[0][rr] = true; } }
+                    // 우측
+                    if ec == col_count { for rr in r..er { v_covered[col_count][rr] = true; } }
+                }
+
+                // 셀이 커버하지 않는 외곽 엣지에만 fallback 적용
+                for c in 0..col_count {
+                    if h_edges[0][c].is_none() && !h_covered[0][c] {
+                        let b = &borders[2];
+                        if !matches!(b.line_type, crate::model::style::BorderLineType::None) && b.width > 0 {
+                            h_edges[0][c] = Some(*b);
+                        }
+                    }
+                    if h_edges[row_count][c].is_none() && !h_covered[row_count][c] {
+                        let b = &borders[3];
+                        if !matches!(b.line_type, crate::model::style::BorderLineType::None) && b.width > 0 {
+                            h_edges[row_count][c] = Some(*b);
+                        }
+                    }
+                }
+                for r in 0..row_count {
+                    if v_edges[0][r].is_none() && !v_covered[0][r] {
+                        let b = &borders[0];
+                        if !matches!(b.line_type, crate::model::style::BorderLineType::None) && b.width > 0 {
+                            v_edges[0][r] = Some(*b);
+                        }
+                    }
+                    if v_edges[col_count][r].is_none() && !v_covered[col_count][r] {
+                        let b = &borders[1];
+                        if !matches!(b.line_type, crate::model::style::BorderLineType::None) && b.width > 0 {
+                            v_edges[col_count][r] = Some(*b);
+                        }
+                    }
+                }
+            }
+        }
+
         // ── 6. 테두리 렌더링 ──
         table_node.children.extend(render_edge_borders(
             tree, &h_edges, &v_edges, &row_col_x, &row_y, table_x, table_y,

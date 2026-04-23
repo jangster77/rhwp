@@ -405,18 +405,15 @@ impl LayoutEngine {
             self.build_header(&mut tree, page_content, header_paragraphs, composed, styles, layout, bin_data_content);
         }
 
-        // 본문 영역 노드
+        // 본문 영역 노드 (clip_rect은 콘텐츠 레이아웃 후 확정)
         let body_id = tree.next_id();
+        let body_bbox = layout_rect_to_bbox(&layout.body_area);
         let mut body_node = RenderNode::new(
             body_id,
             RenderNodeType::Body {
-                clip_rect: if self.clip_enabled.get() {
-                    Some(layout_rect_to_bbox(&layout.body_area))
-                } else {
-                    None
-                },
+                clip_rect: None, // 레이아웃 후 설정
             },
-            layout_rect_to_bbox(&layout.body_area),
+            body_bbox,
         );
 
         // 단별 콘텐츠 레이아웃
@@ -430,6 +427,43 @@ impl LayoutEngine {
 
         // 단 구분선
         self.build_column_separators(&mut tree, &mut body_node, layout);
+
+        // 콘텐츠 레이아웃 후 clip_rect 확정:
+        // 자식 노드(표 등)의 실제 바운딩 박스를 재귀적으로 반영하여
+        // body_area보다 큰 콘텐츠(표 외곽 테두리 등)가 잘리지 않도록 함
+        if self.clip_enabled.get() {
+            let mut clip = body_bbox;
+            fn expand_clip(clip: &mut BoundingBox, node: &RenderNode) {
+                let cb = &node.bbox;
+                let child_bottom = cb.y + cb.height;
+                let child_right = cb.x + cb.width;
+                let clip_bottom = clip.y + clip.height;
+                let clip_right = clip.x + clip.width;
+                if child_bottom > clip_bottom {
+                    clip.height = child_bottom - clip.y;
+                }
+                if child_right > clip_right {
+                    clip.width = child_right - clip.x;
+                }
+                if cb.x < clip.x {
+                    clip.width += clip.x - cb.x;
+                    clip.x = cb.x;
+                }
+                if cb.y < clip.y {
+                    clip.height += clip.y - cb.y;
+                    clip.y = cb.y;
+                }
+                for child in &node.children {
+                    expand_clip(clip, child);
+                }
+            }
+            for child in &body_node.children {
+                expand_clip(&mut clip, child);
+            }
+            body_node.node_type = RenderNodeType::Body {
+                clip_rect: Some(clip),
+            };
+        }
 
         // 용지 기준 이미지: body clip 바깥에 배치 (배경 이미지 등)
         for img_node in paper_images {
