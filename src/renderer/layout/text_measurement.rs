@@ -1287,18 +1287,17 @@ mod tests {
 
     // ── narrow glyph advance 회귀 (Task #257) ──
     //
-    // 단계 1 베이스라인: 메트릭 DB 미등록 폰트(HY헤드라인M)에서
-    // 콤마·중점은 현재 fallback path 로 `font_size * 0.5` advance 가 부여됨.
-    // 단계 2 에서 `is_narrow_punctuation` 헬퍼 + 분기 추가로 advance 를
-    // `font_size * 0.3` 수준으로 수정한 뒤, 아래 4건을 #[ignore] 해제하여
-    // 통과시킨다.
+    // `is_narrow_punctuation` 폴백 분기 검증. 메트릭 DB 및 `resolve_metric_alias`
+    // 양쪽 모두에 등록되지 않은 이름을 사용해야 폴백 경로가 실제로 실행된다.
+    // (과거엔 "HY헤드라인M" 을 사용했으나 Task #259 에서 alias 등록되며 폴백이
+    // 우회됨 → 임의의 미등록 이름으로 교체.)
+    const UNREGISTERED_FONT: &str = "__rhwp_test_unregistered_font__";
 
     #[test]
     fn test_narrow_glyph_comma_base_width() {
         let m = EmbeddedTextMeasurer;
-        // HY헤드라인M 은 메트릭 DB 미등록 → fallback 경로
         let style = TextStyle {
-            font_family: "HY헤드라인M".to_string(),
+            font_family: UNREGISTERED_FONT.to_string(),
             font_size: 13.333,
             ratio: 1.0,
             ..Default::default()
@@ -1317,7 +1316,7 @@ mod tests {
     fn test_narrow_glyph_middle_dot_base_width() {
         let m = EmbeddedTextMeasurer;
         let style = TextStyle {
-            font_family: "HY헤드라인M".to_string(),
+            font_family: UNREGISTERED_FONT.to_string(),
             font_size: 16.667,
             ratio: 1.0,
             ..Default::default()
@@ -1335,7 +1334,7 @@ mod tests {
     fn test_narrow_glyph_period_and_colon() {
         let m = EmbeddedTextMeasurer;
         let style = TextStyle {
-            font_family: "HY헤드라인M".to_string(),
+            font_family: UNREGISTERED_FONT.to_string(),
             font_size: 13.333,
             ratio: 1.0,
             ..Default::default()
@@ -1356,7 +1355,7 @@ mod tests {
         // 회귀 방어: 영문 'A'·한글 '가' 는 narrow 분기에 해당하지 않아야 한다.
         let m = EmbeddedTextMeasurer;
         let style = TextStyle {
-            font_family: "HY헤드라인M".to_string(),
+            font_family: UNREGISTERED_FONT.to_string(),
             font_size: 13.333,
             ratio: 1.0,
             ..Default::default()
