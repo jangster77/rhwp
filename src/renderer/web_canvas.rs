@@ -57,6 +57,9 @@ fn detect_image_mime_type(data: &[u8]) -> &'static str {
         "image/bmp"
     } else if data.len() >= 4 && (data.starts_with(&[0xD7, 0xCD, 0xC6, 0x9A]) || data.starts_with(&[0x01, 0x00, 0x09, 0x00])) {
         "image/x-wmf"
+    } else if super::svg_fragment::is_svg_prefix(data) {
+        // Task #275: RawSvg 래퍼 경로 — <svg 또는 <?xml + <svg
+        "image/svg+xml"
     } else {
         "application/octet-stream"
     }
@@ -415,6 +418,66 @@ impl WebCanvasRenderer {
                 // 위첨자 y: bbox 상단 + baseline의 40% (일반 텍스트 ~80%보다 높음)
                 let y = node.bbox.y + node.bbox.height * 0.4;
                 let _ = self.ctx.fill_text(&marker.text, node.bbox.x, y);
+            }
+            RenderNodeType::RawSvg(raw) => {
+                // Task #275: OLE/차트 SVG 조각 렌더
+                //
+                // A 경로: `<image data:...>` 단일 요소 (네이티브 BMP/PNG/JPEG) → data URL 직접 디코드
+                // B 경로: 복합 SVG (EMF/OOXML 차트) → <svg> 루트로 래핑 후 SVG-as-Image 로 비동기 로드
+                //
+                // 둘 다 기존 draw_image 의 IMAGE_CACHE + HtmlImageElement 비동기 패턴을 공유.
+                use super::svg_fragment::{try_parse_single_image_data_url, decode_base64_data_url, wrap_svg_fragment};
+                if let Some(data_url) = try_parse_single_image_data_url(&raw.svg) {
+                    // A 경로
+                    if let Some((_mime, bytes)) = decode_base64_data_url(data_url) {
+                        self.draw_image(
+                            &bytes,
+                            node.bbox.x, node.bbox.y,
+                            node.bbox.width, node.bbox.height,
+                        );
+                    }
+                } else {
+                    // B 경로: SVG 조각을 <svg> 루트로 래핑. viewBox 를 bbox 와 동일하게
+                    // 맞춰 조각 내부의 절대좌표가 drawImage 위치와 일치하도록 한다.
+                    let svg_doc = wrap_svg_fragment(
+                        &raw.svg,
+                        node.bbox.x, node.bbox.y,
+                        node.bbox.width, node.bbox.height,
+                    );
+                    // draw_image 가 detect_image_mime_type 으로 "image/svg+xml" 감지 →
+                    // data:image/svg+xml;base64,... 로 로드 → HtmlImageElement 캐시
+                    self.draw_image(
+                        svg_doc.as_bytes(),
+                        node.bbox.x, node.bbox.y,
+                        node.bbox.width, node.bbox.height,
+                    );
+                }
+            }
+            RenderNodeType::Placeholder(ph) => {
+                // 차트/OLE placeholder — svg.rs 와 동등 출력 (점선 테두리 + 중앙 라벨)
+                let x = node.bbox.x;
+                let y = node.bbox.y;
+                let w = node.bbox.width;
+                let h = node.bbox.height;
+                // 배경 rect
+                self.ctx.set_fill_style_str(&color_to_css(ph.fill_color));
+                self.ctx.fill_rect(x, y, w, h);
+                // 점선 테두리 (6 3)
+                self.set_line_dash(&StrokeDash::Dash);
+                self.ctx.set_stroke_style_str(&color_to_css(ph.stroke_color));
+                self.ctx.set_line_width(1.0);
+                self.ctx.stroke_rect(x, y, w, h);
+                let _ = self.ctx.set_line_dash(&js_sys::Array::new());
+                // 중앙 라벨 (svg.rs 와 동일한 font_size 공식)
+                let font_size = (w.min(h) * 0.06).clamp(12.0, 28.0);
+                self.ctx.set_font(&format!("{:.1}px sans-serif", font_size));
+                self.ctx.set_fill_style_str(&color_to_css(ph.stroke_color));
+                self.ctx.set_text_align("center");
+                self.ctx.set_text_baseline("middle");
+                let _ = self.ctx.fill_text(&ph.label, x + w / 2.0, y + h / 2.0);
+                // 텍스트 정렬 기본값 복원 (다른 노드에 영향 주지 않도록)
+                self.ctx.set_text_align("start");
+                self.ctx.set_text_baseline("alphabetic");
             }
             _ => {
                 // 구조 노드(Header, Footer, Column 등)는 자식만 렌더링

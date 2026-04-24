@@ -18,6 +18,7 @@ pub mod render_tree;
 pub mod scheduler;
 pub mod style_resolver;
 pub mod svg;
+pub mod svg_fragment;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod pdf;
 pub mod typeset;
