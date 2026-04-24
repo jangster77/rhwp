@@ -180,14 +180,28 @@ fn render_box(
             }
         }
         LayoutKind::Paren { left, right, body } => {
+            // 텍스트 높이 파렌(`(`, `)`)은 폰트 글리프로 렌더, 그 외는 path. (Task #283)
+            let paren_w = fs * 0.333;
+            let use_glyph = lb.height <= fs * 1.2;
             if !left.is_empty() {
-                draw_stretch_bracket(ctx, left, x, y, fs * 0.3, lb.height, color, fs);
+                if use_glyph && (left == "(" || left == ")") {
+                    set_font(ctx, fs, false, false);
+                    ctx.set_fill_style_str(color);
+                    let _ = ctx.fill_text(left, x, y + lb.baseline);
+                } else {
+                    draw_stretch_bracket(ctx, left, x, y, paren_w, lb.height, color, fs);
+                }
             }
             render_box(ctx, body, x, y, color, fs, italic, bold);
             if !right.is_empty() {
-                let paren_w = fs * 0.3;
                 let right_x = x + lb.width - paren_w;
-                draw_stretch_bracket(ctx, right, right_x, y, paren_w, lb.height, color, fs);
+                if use_glyph && (right == "(" || right == ")") {
+                    set_font(ctx, fs, false, false);
+                    ctx.set_fill_style_str(color);
+                    let _ = ctx.fill_text(right, right_x, y + lb.baseline);
+                } else {
+                    draw_stretch_bracket(ctx, right, right_x, y, paren_w, lb.height, color, fs);
+                }
             }
         }
         LayoutKind::Decoration { kind, body } => {

@@ -225,18 +225,33 @@ fn render_box(
             }
         }
         LayoutKind::Paren { left, right, body } => {
+            // 텍스트 높이 파렌(`(`, `)`)은 폰트 글리프로 렌더, 그 외는 path. (Task #283)
+            let paren_w = fs * 0.333;
+            let use_glyph = lb.height <= fs * 1.2;
             // 왼쪽 괄호
             if !left.is_empty() {
-                let paren_w = fs * 0.3;
-                draw_stretch_bracket(svg, left, x, y, paren_w, lb.height, color, fs);
+                if use_glyph && (left == "(" || left == ")") {
+                    svg.push_str(&format!(
+                        "<text x=\"{:.2}\" y=\"{:.2}\" font-size=\"{:.2}\" fill=\"{}\"{}>{}</text>\n",
+                        x, y + lb.baseline, fs, color, EQ_FONT_FAMILY, escape_xml(left),
+                    ));
+                } else {
+                    draw_stretch_bracket(svg, left, x, y, paren_w, lb.height, color, fs);
+                }
             }
             // 본체
             render_box(svg, body, x, y, color, fs, italic, bold);
             // 오른쪽 괄호
             if !right.is_empty() {
-                let paren_w = fs * 0.3;
                 let right_x = x + lb.width - paren_w;
-                draw_stretch_bracket(svg, right, right_x, y, paren_w, lb.height, color, fs);
+                if use_glyph && (right == "(" || right == ")") {
+                    svg.push_str(&format!(
+                        "<text x=\"{:.2}\" y=\"{:.2}\" font-size=\"{:.2}\" fill=\"{}\"{}>{}</text>\n",
+                        right_x, y + lb.baseline, fs, color, EQ_FONT_FAMILY, escape_xml(right),
+                    ));
+                } else {
+                    draw_stretch_bracket(svg, right, right_x, y, paren_w, lb.height, color, fs);
+                }
             }
         }
         LayoutKind::Decoration { kind, body } => {
@@ -507,9 +522,18 @@ mod tests {
 
     #[test]
     fn test_paren_svg() {
+        // 텍스트 높이 파렌은 글리프로 렌더 (Task #283)
         let svg = render_eq("LEFT ( a RIGHT )");
-        assert!(svg.contains("<path")); // 괄호
-        assert!(svg.contains("<text")); // 내용
+        assert!(svg.contains("<text")); // 내용 + 글리프 파렌
+        assert!(!svg.contains("<path")); // path 파렌 아님
+    }
+
+    #[test]
+    fn test_paren_stretch_svg() {
+        // 스트레치 파렌(분수 감쌈)은 path 유지 (Task #283)
+        let svg = render_eq("LEFT ( a over b RIGHT )");
+        assert!(svg.contains("<path")); // 스트레치 괄호
+        assert!(svg.contains("<line")); // 분수선
     }
 
     #[test]

@@ -829,7 +829,8 @@ impl EqLayout {
     fn layout_paren(&self, left: &str, right: &str, body: &EqNode, fs: f64) -> LayoutBox {
         let b = self.layout_node(body, fs);
         let pad = fs * PAREN_PAD;
-        let paren_w = fs * 0.3;
+        // Times New Roman '(' advance (em 기준) = 0.333. 글리프/path 공통 폭. (Task #283)
+        let paren_w = fs * 0.333;
 
         let left_w = if left.is_empty() { 0.0 } else { paren_w };
         let right_w = if right.is_empty() { 0.0 } else { paren_w };
