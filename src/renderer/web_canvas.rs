@@ -416,6 +416,23 @@ impl WebCanvasRenderer {
                 let y = node.bbox.y + node.bbox.height * 0.4;
                 let _ = self.ctx.fill_text(&marker.text, node.bbox.x, y);
             }
+            RenderNodeType::RawSvg(raw) => {
+                // Task #275: OLE/차트 SVG 조각 렌더
+                //
+                // 현재는 `<image data:...>` 단일 요소 (네이티브 BMP/PNG/JPEG 폴백) 경로만 처리.
+                // 복합 SVG (EMF/OOXML 차트) 는 단계 3 에서 추가 예정.
+                use super::svg_fragment::{try_parse_single_image_data_url, decode_base64_data_url};
+                if let Some(data_url) = try_parse_single_image_data_url(&raw.svg) {
+                    if let Some((_mime, bytes)) = decode_base64_data_url(data_url) {
+                        self.draw_image(
+                            &bytes,
+                            node.bbox.x, node.bbox.y,
+                            node.bbox.width, node.bbox.height,
+                        );
+                    }
+                }
+                // else: 단계 3 대기. 현재는 암묵 skip (단계 1 이전 동작과 동일).
+            }
             RenderNodeType::Placeholder(ph) => {
                 // 차트/OLE placeholder — svg.rs 와 동등 출력 (점선 테두리 + 중앙 라벨)
                 let x = node.bbox.x;
