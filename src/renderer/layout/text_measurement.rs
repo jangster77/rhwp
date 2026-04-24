@@ -321,7 +321,8 @@ impl TextMeasurer for EmbeddedTextMeasurer {
                     let tab_target = x + tab_width_px;
                     match tab_type {
                         1 => { // 오른쪽
-                            let seg_w = measure_segment_from(&chars, &cluster_len, i + 1, &char_width);
+                            let seg_start = { let mut s = i + 1; while s < chars.len() && chars[s] == ' ' && cluster_len[s] != 0 { s += 1; } s };
+                            let seg_w = measure_segment_from(&chars, &cluster_len, seg_start, &char_width);
                             x = (tab_target - seg_w).max(x);
                         }
                         2 => { // 가운데
@@ -342,11 +343,8 @@ impl TextMeasurer for EmbeddedTextMeasurer {
                     let rel_tab = tab_pos - style.line_x_offset;
                     match tab_type {
                         1 => { // 오른쪽
-                            let seg_w = measure_segment_from(&chars, &cluster_len, i + 1, &char_width);
-                            if tab_type == 1 {
-                                eprintln!("[DEBUG_TAB_POS] RIGHT tab: abs_x={:.2}, tab_pos={:.2}, line_x_offset={:.2}, rel_tab={:.2}, seg_w={:.2}, avail_w={:.2}, result_x={:.2}",
-                                    abs_x, tab_pos, style.line_x_offset, rel_tab, seg_w, style.available_width, (rel_tab - seg_w).max(x));
-                            }
+                            let seg_start = { let mut s = i + 1; while s < chars.len() && chars[s] == ' ' && cluster_len[s] != 0 { s += 1; } s };
+                            let seg_w = measure_segment_from(&chars, &cluster_len, seg_start, &char_width);
                             x = (rel_tab - seg_w).max(x);
                         }
                         2 => { // 가운데
@@ -653,7 +651,8 @@ impl TextMeasurer for WasmTextMeasurer {
                     let rel_tab = tab_pos - style.line_x_offset;
                     match tab_type {
                         1 => {
-                            let seg_w = measure_segment_from(&chars, &cluster_len, i + 1, &char_width);
+                            let seg_start = { let mut s = i + 1; while s < chars.len() && chars[s] == ' ' && cluster_len[s] != 0 { s += 1; } s };
+                            let seg_w = measure_segment_from(&chars, &cluster_len, seg_start, &char_width);
                             x = (rel_tab - seg_w).max(x);
                         }
                         2 => {
