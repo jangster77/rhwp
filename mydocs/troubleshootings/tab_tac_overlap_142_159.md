@@ -155,3 +155,45 @@ est 측 + render 측 양쪽 모두 `inline_tab_cursor_*: usize` 변수 도입하
 - 이슈 [#290](https://github.com/edwardkim/rhwp/issues/290)
 - 리포트: `mydocs/report/task_m100_290_report.md`
 - 계획서: `mydocs/plans/task_m100_290{,_impl}.md`
+
+## 후속 사건: #296 WASM Canvas 경로 inline_tabs 무시 (2026-04-24)
+
+### 증상
+
+PR #292 (#290) 머지 후 브라우저 검증에서 `exam_math.hwp` p.7 #18 "수열" 문항이 여전히 우측으로 밀림:
+- SVG (CLI): ✅ 정상 (`translate(109.80, ...)`)
+- Canvas (브라우저): ❌ x≈290.91
+
+### 근본 원인
+
+`src/renderer/layout/text_measurement.rs` 두 측정기 비대칭:
+
+- `EmbeddedTextMeasurer` (네이티브): inline_tabs 분기 존재 (단, `tab_type = ext[2]` 전체 u16 해석 버그 보유)
+- `WasmTextMeasurer` (WASM): **inline_tabs 분기 자체가 부재** → `find_next_tab_stop` (TabDef) 만 사용 → `auto_tab_right` 폴스루 → 우측 밀림
+
+### 수정 (범위 축소판)
+
+`src/renderer/layout/text_measurement.rs`:
+- 헬퍼 `inline_tab_type(ext) -> u8` 신규 추가 = `(ext[2] >> 8) & 0xFF`
+- `WasmTextMeasurer::estimate_text_width` / `compute_char_positions` 에 inline_tabs 분기 신규 추가
+  - match arm: `2 => RIGHT`, `3 => CENTER`, `_ => LEFT/DECIMAL` (PR #292 실증 포맷)
+- `EmbeddedTextMeasurer` 는 **건드리지 않음** — 기존 golden SVG (issue-147, issue-267) 가 우연한 LEFT 폴백에 의존하고 있어 네이티브 측 수정은 한컴 PDF 대조로 올바른 동작 확정 후 별도 이슈 처리
+
+### 검증
+
+- `cargo test --lib`: 992 passed (988 → 992, 단위 테스트 4건 추가)
+- `cargo test --test svg_snapshot`: 6 passed (기존 golden 유지)
+- `cargo test --test tab_cross_run`: 1 passed (#290 회귀 없음)
+- WASM Docker 빌드 → rhwp-studio 브라우저 시각 검증 성공 (작업지시자 판정)
+
+### 교훈 (#290 교훈의 확장)
+
+> #142 → #290 → #296 누적: "같은 데이터를 다른 경로로 계산하는 코드는 헬퍼로 중앙화." 이번 #296 에서는 범위 축소 판단으로 WASM 만 수정 — **`inline_tab_type` 을 `pub(super)` 로 공개**해두어 네이티브 측정기가 후속 이슈에서 재사용 가능한 상태로 만듦.
+>
+> 또한 **범위 축소 결정의 가치**: Stage 2 중간에 네이티브 수정이 기존 golden 2건을 깨트리는 것을 확인한 시점에 방향을 전환. 무리하게 밀어붙여 golden 을 갱신했다면 한컴 PDF 대조 없이 잘못된 방향으로 갈 위험.
+
+### 관련
+- 이슈 [#296](https://github.com/edwardkim/rhwp/issues/296)
+- 리포트: `mydocs/report/task_m100_296_report.md`
+- 계획서: `mydocs/plans/task_m100_296{,_impl}.md`
+- 후속 이슈 후보: 네이티브 `EmbeddedTextMeasurer` 의 `tab_type = ext[2]` 버그 (한컴 PDF 대조 후 수정)

@@ -1076,3 +1076,35 @@ fn task290_no_inline_auto_tab_right_fallthrough() {
     assert_eq!(tt, 1, "auto_tab_right 은 RIGHT(1)");
     assert!((tp - 420.0).abs() < 0.1, "tab_pos 는 available_width 에 고정");
 }
+
+// [Task #296] inline_tab_type 헬퍼 단위 테스트
+// HWP tab_extended 의 ext[2] 포맷: high byte = 탭 종류 enum+1, low byte = fill_type
+
+#[test]
+fn task296_inline_tab_type_left() {
+    // ext[2] = 0x0100 (256) → high=1 = LEFT (exam_math #18 실측 케이스)
+    let ext = [132u16, 0, 0x0100, 0, 0, 0, 9];
+    assert_eq!(super::text_measurement::inline_tab_type(&ext), 1);
+}
+
+#[test]
+fn task296_inline_tab_type_right() {
+    // ext[2] = 0x0203 (515) → high=2 = RIGHT, low=3 = fill=dot
+    //         (hwp-3.0-HWPML 저작권\t1 실측 케이스, PR #292 트러블슈팅 기록)
+    let ext = [200u16, 0, 0x0203, 0, 0, 0, 9];
+    assert_eq!(super::text_measurement::inline_tab_type(&ext), 2);
+}
+
+#[test]
+fn task296_inline_tab_type_center() {
+    // ext[2] = 0x0300 → high=3 = CENTER
+    let ext = [150u16, 0, 0x0300, 0, 0, 0, 9];
+    assert_eq!(super::text_measurement::inline_tab_type(&ext), 3);
+}
+
+#[test]
+fn task296_inline_tab_type_decimal() {
+    // ext[2] = 0x0400 → high=4 = DECIMAL
+    let ext = [100u16, 0, 0x0400, 0, 0, 0, 9];
+    assert_eq!(super::text_measurement::inline_tab_type(&ext), 4);
+}
