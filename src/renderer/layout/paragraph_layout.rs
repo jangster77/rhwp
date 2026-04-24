@@ -9,7 +9,7 @@ use super::super::page_layout::LayoutRect;
 use super::super::height_measurer::MeasuredTable;
 use super::super::composer::{ComposedParagraph, compose_paragraph};
 use super::super::style_resolver::ResolvedStyleSet;
-use super::super::{TextStyle, ShapeStyle, hwpunit_to_px, format_number, NumberFormat as NumFmt, AutoNumberCounter};
+use super::super::{TextStyle, ShapeStyle, TabStop, hwpunit_to_px, format_number, NumberFormat as NumFmt, AutoNumberCounter};
 use super::{LayoutEngine, CellContext};
 use super::text_measurement::{resolved_to_text_style, estimate_text_width, compute_char_positions, extract_tab_leaders_with_extended, find_next_tab_stop};
 use super::border_rendering::create_border_line_nodes;
@@ -24,6 +24,56 @@ pub(crate) fn ensure_min_baseline(raw_baseline: f64, max_font_size: f64) -> f64 
     }
     let min_baseline = max_font_size * 0.8;
     raw_baseline.max(min_baseline)
+}
+
+/// run 이 `\t` 로 끝날 때, 그 마지막 `\t` 가 cross-run 우측/가운데 탭으로 동작해야 하는지 판정한다.
+///
+/// HWP 본문 탭에는 두 가지 정보원이 있다:
+/// - `tab_extended` (inline tab): `ext[2]` 고바이트 = 탭 종류 (1=LEFT, 2=RIGHT, 3=CENTER, 4=DECIMAL)
+/// - `TabDef` (문단 모양의 탭 정의): 절대 위치 + type/fill
+///
+/// inline 이 커버하는 `\t` 는 inline 의 종류가 우선이며, LEFT 이면 cross-run 재배치 없음.
+/// inline 이 비었거나 `\t` 인덱스를 초과하는 경우에만 `find_next_tab_stop` 기반 TabDef 폴백으로 판정한다.
+///
+/// 반환 `Some((tab_pos, tab_type))` 은 `pending_right_tab_*` 에 그대로 대입 가능 (tab_type ∈ {1, 2}).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn resolve_last_tab_pending(
+    run_text: &str,
+    last_inline_idx: usize,
+    tab_extended: &[[u16; 7]],
+    text_style: &TextStyle,
+    tab_stops: &[TabStop],
+    tab_width: f64,
+    auto_tab_right: bool,
+    available_width: f64,
+) -> Option<(f64, u8)> {
+    // 1) inline_tabs 가 마지막 \t 를 커버하는 경우: ext[2] 고바이트로 종류 판정
+    if last_inline_idx < tab_extended.len() {
+        let inline_type = ((tab_extended[last_inline_idx][2] >> 8) & 0xFF) as u8;
+        match inline_type {
+            // 1=LEFT (explicit), 0=unspecified → cross-run pending 없음 (본 수정의 핵심)
+            0 | 1 => return None,
+            // 2=RIGHT, 3=CENTER → TabDef 기반 위치 계산으로 폴스루
+            2 | 3 => {}
+            // 미지 값 (4=DECIMAL 등) → 보수적으로 LEFT 취급
+            _ => return None,
+        }
+    }
+
+    // 2) inline 이 LEFT 아님 (RIGHT/CENTER) 또는 inline 없음 → TabDef find_next_tab_stop 으로 판정
+    let last_tab_byte = run_text.rfind('\t')?;
+    let text_before = &run_text[..last_tab_byte];
+    let w_before = estimate_text_width(text_before, text_style);
+    let abs_before = text_style.line_x_offset + w_before;
+    let tw = if tab_width > 0.0 { tab_width } else { 48.0 };
+    let (tp, tt, _) = find_next_tab_stop(
+        abs_before, tab_stops, tw, auto_tab_right, available_width,
+    );
+    if tt == 1 || tt == 2 {
+        Some((tp, tt))
+    } else {
+        None
+    }
 }
 
 impl LayoutEngine {
@@ -787,6 +837,8 @@ impl LayoutEngine {
             let est_x_start = est_x;
             let mut pending_right_tab_est: Option<(f64, u8)> = None;
             let mut run_char_pos_est = comp_line.char_start;
+            // cross-run 탭 감지용 inline_tabs(composed.tab_extended) 커서 — Task #290
+            let mut inline_tab_cursor_est: usize = 0;
             for run in &comp_line.runs {
                 let run_char_count_est = if run.char_overlap.is_some() {
                     let chars: Vec<char> = run.text.chars().collect();
@@ -831,6 +883,7 @@ impl LayoutEngine {
                     };
                     est_x += w;
                     run_char_pos_est = run_char_end_est;
+                    inline_tab_cursor_est += run.text.chars().filter(|c| *c == '\t').count();
                     continue;
                 }
                 // treat_as_char 분기점 처리: run 내 tac 위치에서 이미지 폭 삽입
@@ -856,19 +909,22 @@ impl LayoutEngine {
                 if !remaining_est.is_empty() {
                     est_x += estimate_text_width(&remaining_est, &ts);
                 }
-                // run이 \t로 끝나면 다음 run에 오른쪽/가운데 탭 조정 필요
+                // run이 \t로 끝나면 다음 run에 오른쪽/가운데 탭 조정 필요 — Task #290:
+                // inline_tabs(composed.tab_extended) 가 LEFT 를 명시하면 cross-run pending 을 설정하지 않는다.
                 if run.text.ends_with('\t') {
-                    if let Some(last_tab_byte) = run.text.rfind('\t') {
-                        let text_before_tab = &run.text[..last_tab_byte];
-                        let w_before = estimate_text_width(text_before_tab, &ts);
-                        let abs_before = ts.line_x_offset + w_before;
-                        let tw = if tab_width > 0.0 { tab_width } else { 48.0 };
-                        let (tp, tt, _) = find_next_tab_stop(
-                            abs_before, &tab_stops, tw, auto_tab_right, available_width,
+                    let run_tab_count = run.text.chars().filter(|c| *c == '\t').count();
+                    if run_tab_count > 0 {
+                        let last_inline_idx = inline_tab_cursor_est + run_tab_count - 1;
+                        pending_right_tab_est = resolve_last_tab_pending(
+                            &run.text,
+                            last_inline_idx,
+                            &composed.tab_extended,
+                            &ts,
+                            &tab_stops,
+                            tab_width,
+                            auto_tab_right,
+                            available_width,
                         );
-                        if tt == 1 || tt == 2 {
-                            pending_right_tab_est = Some((tp, tt));
-                        }
                     }
                 }
                 // 각주 마커 폭: run 내에 각주가 있으면 마커 위첨자 폭 추가
@@ -882,6 +938,7 @@ impl LayoutEngine {
                     }
                 }
                 run_char_pos_est = run_char_end_est;
+                inline_tab_cursor_est += run.text.chars().filter(|c| *c == '\t').count();
             }
             // 교차 run 탭으로 인한 역방향 이동이 있을 수 있으므로
             // est_x 차이로 정확한 점유 폭을 계산
@@ -1143,6 +1200,8 @@ impl LayoutEngine {
             let mut run_char_pos = comp_line.char_start;
             // 이미 삽입한 도형 마커 추적
             let mut shape_marker_inserted = vec![false; shape_markers.len()];
+            // cross-run 탭 감지용 inline_tabs(composed.tab_extended) 커서 — Task #290
+            let mut inline_tab_cursor_render: usize = 0;
             for (run_idx, run) in comp_line.runs.iter().enumerate() {
                 // 조판부호: 이 run 시작 위치 이전의 도형 마커를 먼저 삽입
                 for (smi, (spos, stext)) in shape_markers.iter().enumerate() {
@@ -1218,20 +1277,22 @@ impl LayoutEngine {
                     text_style.inline_tabs = saved_inline_tabs;
                     text_style.tab_leaders = extract_tab_leaders_with_extended(&run.text, &positions, &text_style, &composed.tab_extended);
                 }
-                // 교차 run 오른쪽/가운데 탭 감지:
-                // run이 \t로 끝나면 해당 탭의 종류를 확인하여 다음 run 조정에 사용
+                // 교차 run 오른쪽/가운데 탭 감지 — Task #290:
+                // inline_tabs(composed.tab_extended) 가 LEFT 를 명시하면 cross-run pending 을 설정하지 않는다.
                 if has_tabs && run.text.ends_with('\t') {
-                    if let Some(last_tab_pos) = run.text.rfind('\t') {
-                        let text_before_tab = &run.text[..last_tab_pos];
-                        let w_before = estimate_text_width(text_before_tab, &text_style);
-                        let abs_before = text_style.line_x_offset + w_before;
-                        let tw = if tab_width > 0.0 { tab_width } else { 48.0 };
-                        let (tp, tt, _) = find_next_tab_stop(
-                            abs_before, &tab_stops, tw, auto_tab_right, available_width,
+                    let run_tab_count = run.text.chars().filter(|c| *c == '\t').count();
+                    if run_tab_count > 0 {
+                        let last_inline_idx = inline_tab_cursor_render + run_tab_count - 1;
+                        pending_right_tab_render = resolve_last_tab_pending(
+                            &run.text,
+                            last_inline_idx,
+                            &composed.tab_extended,
+                            &text_style,
+                            &tab_stops,
+                            tab_width,
+                            auto_tab_right,
+                            available_width,
                         );
-                        if tt == 1 || tt == 2 {
-                            pending_right_tab_render = Some((tp, tt));
-                        }
                     }
                 }
                 let run_char_count = if run.char_overlap.is_some() {
@@ -1756,6 +1817,7 @@ impl LayoutEngine {
 
                 char_offset += run_char_count;
                 run_char_pos = run_char_end;
+                inline_tab_cursor_render += run.text.chars().filter(|c| *c == '\t').count();
                 char_x_map.push((char_offset, x));
             }
 

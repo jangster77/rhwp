@@ -88,3 +88,70 @@ if tab_char_idx < style.inline_tabs.len() {
 1. **같은 데이터를 다른 경로로 계산하는 코드는 반드시 동기화** — `compute_char_positions`와 `estimate_text_width`가 다른 탭 처리 로직을 사용하면 레이아웃이 어긋남
 2. **디버그 출력으로 두 함수의 결과를 동시에 비교**하는 것이 가장 효과적인 진단 방법
 3. **격자 오버레이 기능(#145)**이 한컴 비교에 큰 도움
+
+---
+
+## 후속 사건: #290 cross-run 탭 감지 (2026-04-24)
+
+### 증상
+
+동일 파일(`samples/exam_math.hwp`) 페이지 7 의 18번 "수열" 문항 첫 줄이 좌측 단의 **우측 끝 근처로 밀려 렌더**됨. PDF 는 `18. 수열 {a_n}이 모든 자연수 n에 대하여` 인데 SVG 는 `18.` ····· `수열 ...`.
+
+### 근본 원인
+
+`paragraph_layout.rs:1213-1226` (render 측) + `:854-868` (est 측) 의 **cross-run 우측/가운데 탭 감지 블록**:
+
+```rust
+if has_tabs && run.text.ends_with('\t') {
+    if let Some(last_tab_pos) = run.text.rfind('\t') {
+        // ...
+        let (tp, tt, _) = find_next_tab_stop(                  // ← inline_tabs 무시
+            abs_before, &tab_stops, tw, auto_tab_right, available_width,
+        );
+        if tt == 1 || tt == 2 {
+            pending_right_tab_render = Some((tp, tt));         // ← 잘못된 설정
+        }
+    }
+}
+```
+
+마지막 `\t` 의 종류를 판정할 때 `find_next_tab_stop` 만 사용 — 본문 `tab_extended` (inline_tabs) 는 참조하지 않음. 본 case:
+
+1. Run `"18.\t\t\t"` 의 3 개 `\t` 는 inline 경로에서 LEFT 로 x=38.24 까지 진행 (정상)
+2. cross-run 감지는 TabDef 만 봄 → `abs_before=37.19` > 모든 stops → `auto_tab_right` 폴스루 → **type=1 (RIGHT)** 오판
+3. `pending_right_tab_render = Some((420.11, 1))` 설정
+4. 다음 run `"수열 이 모든 자연수 "` 가 `col_area.x + 420.11 - next_w(201)` = 290.91 px 로 **우측 끝 역산 배치**
+
+### ext[2] 포맷 실증
+
+임시 트레이스로 확정:
+- `ext[2]` 는 high/low byte 합성 값
+- **high byte = 탭 종류 enum+1** (1=LEFT, 2=RIGHT, 3=CENTER, 4=DECIMAL)
+- low byte = fill_type (TabDef.fill 과 일치)
+
+현재 `text_measurement.rs:217, 320` 는 `ext[2]` 전체 u16 을 종류로 해석 → 실제 HWP 값 (최소 256) 과 매칭되지 않아 **inline RIGHT/CENTER 경로 영원히 도달 불가** (별도 후속 이슈 후보).
+
+### 수정
+
+`paragraph_layout.rs` 에 `resolve_last_tab_pending` 헬퍼 신규 추가:
+- inline_tabs 가 마지막 `\t` 를 커버하면 `ext[2] >> 8` 고바이트로 탭 종류 판정
+- LEFT (0/1) → `None` (pending 설정 안 함) — **본 수정의 핵심**
+- RIGHT/CENTER (2/3) → TabDef `find_next_tab_stop` 기반 위치로 폴스루 (기존 동작 유지)
+- 미지 (4=DECIMAL 등) → 보수적 `None`
+
+est 측 + render 측 양쪽 모두 `inline_tab_cursor_*: usize` 변수 도입하여 run 을 거치며 증가 (`run.text.chars().filter(|c| *c == '\t').count()`).
+
+### 검증
+
+- 단위 테스트 5 건 (`task290_*`) + 통합 테스트 1 건 (`tab_cross_run::task290_exam_math_p7_item18_not_right_aligned`) 모두 pass
+- 184 페이지 회귀 (exam_math 20 + biz_plan 6 + exam_eng 11 + exam_kor 25 + hwp-3.0-HWPML 122): **1 페이지만 변경** (exam_math p.7, 의도된 item 18 수정)
+- RIGHT inline tab 케이스 (hwp-3.0-HWPML 저작권\t1) 회귀 없음
+
+### 교훈 (#142 교훈의 확장)
+
+> "**같은 데이터를 다른 경로로 계산하는 코드는 반드시 동기화**" 라는 #142 교훈이 **run 내부 탭 처리 ↔ cross-run 탭 감지** 의 불일치로 재연됨. 런 내부는 inline_tabs 를 봤지만 cross-run 감지는 TabDef 만 봄. 같은 파일에서 서로 다른 함수가 서로 다른 데이터 소스를 참조하는 패턴이 재발할 여지가 있으면 **헬퍼로 중앙화** 하는 것이 안전 (본 수정에서 `resolve_last_tab_pending` 으로 통합).
+
+### 관련
+- 이슈 [#290](https://github.com/edwardkim/rhwp/issues/290)
+- 리포트: `mydocs/report/task_m100_290_report.md`
+- 계획서: `mydocs/plans/task_m100_290{,_impl}.md`
