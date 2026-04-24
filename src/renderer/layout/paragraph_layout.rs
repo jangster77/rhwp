@@ -808,10 +808,15 @@ impl LayoutEngine {
                 // 교차 run 오른쪽/가운데 탭: 이 run의 시작 위치를 역방향으로 조정
                 if let Some((tab_pos, tab_type)) = pending_right_tab_est.take() {
                     ts.line_x_offset = est_x;
-                    let run_w = estimate_text_width(&run.text, &ts);
                     match tab_type {
-                        1 => est_x = tab_pos - run_w,
-                        2 => est_x = tab_pos - run_w / 2.0,
+                        1 => {
+                            let run_w = estimate_text_width(run.text.trim_start(), &ts);
+                            est_x = tab_pos - run_w;
+                        }
+                        2 => {
+                            let run_w = estimate_text_width(&run.text, &ts);
+                            est_x = tab_pos - run_w / 2.0;
+                        }
                         _ => {}
                     }
                 }
@@ -1176,10 +1181,15 @@ impl LayoutEngine {
                 // 해당 탭이 오른쪽/가운데 탭이면 이 run을 역방향으로 이동
                 if let Some((tab_pos, tab_type)) = pending_right_tab_render.take() {
                     text_style.line_x_offset = x - col_area.x;
-                    let next_w = estimate_text_width(&run.text, &text_style);
                     match tab_type {
-                        1 => x = col_area.x + tab_pos - next_w,
-                        2 => x = col_area.x + tab_pos - next_w / 2.0,
+                        1 => {
+                            let next_w = estimate_text_width(run.text.trim_start(), &text_style);
+                            x = col_area.x + tab_pos - next_w;
+                        }
+                        2 => {
+                            let next_w = estimate_text_width(&run.text, &text_style);
+                            x = col_area.x + tab_pos - next_w / 2.0;
+                        }
                         _ => {}
                     }
                 }
