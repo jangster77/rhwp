@@ -104,6 +104,12 @@ fn issue_267_ktx_toc_page() {
     check_snapshot("samples/KTX.hwp", 1, "issue-267/ktx-toc-page");
 }
 
+/// Issue #147: aift.hwp 4페이지 — MEMO 컨트롤이 바탕쪽으로 오분류되어 렌더링되는 버그
+#[test]
+fn issue_147_aift_page3() {
+    check_snapshot("samples/aift.hwp", 3, "issue-147/aift-page3");
+}
+
 /// Determinism probe: render the same page twice in one process and assert
 /// byte-for-byte equality. If this ever fails, the snapshot tests above
 /// are unreliable regardless of golden correctness.

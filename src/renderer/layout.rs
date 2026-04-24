@@ -742,6 +742,10 @@ impl LayoutEngine {
         page_number: u32,
     ) {
         if let Some(mp) = active_master_page {
+            // 영역 0×0 바탕쪽은 MEMO 컨트롤 오분류 방어용 가드 — 렌더링 skip
+            if mp.text_width == 0 && mp.text_height == 0 {
+                return;
+            }
             self.current_page_number.set(page_number);
             if !mp.paragraphs.is_empty() {
                 let mp_id = tree.next_id();

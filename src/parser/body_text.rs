@@ -653,6 +653,12 @@ fn parse_master_pages_from_raw(raw_records: &[RawRecord]) -> Vec<MasterPage> {
         let text_ref = r.read_u8().unwrap_or(0);
         let num_ref = r.read_u8().unwrap_or(0);
 
+        // 영역 0×0 LIST_HEADER는 MEMO/주석 컨트롤의 텍스트 박스가 오분류된 것.
+        // 실제 바탕쪽은 반드시 text_width > 0 || text_height > 0.
+        if text_width == 0 && text_height == 0 {
+            continue;
+        }
+
         // 확장 플래그 (byte 18-19, 표 139 이후)
         let ext_flags = r.read_u16().unwrap_or(0);
 
