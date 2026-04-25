@@ -362,17 +362,26 @@ pub struct TextLineNode {
     pub section_index: Option<usize>,
     /// 소속 문단 인덱스 (빈 문단 커서 위치 계산용)
     pub para_index: Option<usize>,
+    /// 문단 내 줄 인덱스 (디버그 오버레이용)
+    pub line_index: Option<u32>,
+    /// LINE_SEG vertical_pos (HWPUNIT, 디버그 오버레이/vpos-reset 검출용)
+    pub vpos: Option<i32>,
 }
 
 impl TextLineNode {
     /// 기본 생성 (문단 식별 정보 없음)
     pub fn new(line_height: f64, baseline: f64) -> Self {
-        Self { line_height, baseline, section_index: None, para_index: None }
+        Self { line_height, baseline, section_index: None, para_index: None, line_index: None, vpos: None }
     }
 
     /// 문단 식별 정보 포함 생성 (커서 위치 계산용)
     pub fn with_para(line_height: f64, baseline: f64, section_index: usize, para_index: usize) -> Self {
-        Self { line_height, baseline, section_index: Some(section_index), para_index: Some(para_index) }
+        Self { line_height, baseline, section_index: Some(section_index), para_index: Some(para_index), line_index: None, vpos: None }
+    }
+
+    /// 문단 식별 + LINE_SEG vpos 정보 포함 생성 (디버그 오버레이용)
+    pub fn with_para_vpos(line_height: f64, baseline: f64, section_index: usize, para_index: usize, line_index: u32, vpos: i32) -> Self {
+        Self { line_height, baseline, section_index: Some(section_index), para_index: Some(para_index), line_index: Some(line_index), vpos: Some(vpos) }
     }
 }
 

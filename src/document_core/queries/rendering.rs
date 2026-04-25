@@ -1351,12 +1351,14 @@ impl DocumentCore {
                                         format!("h={:.1} (sb={:.1} lines={:.1} sa={:.1})", sb + lines + sa, sb, lines, sa)
                                     })
                                     .unwrap_or_default();
-                                out.push_str(&format!("    FullParagraph  pi={}  {}  \"{}\"\n",
-                                    para_index, height, text_preview));
+                                let vpos_info = format_vpos_range(paragraphs.get(*para_index), None, None);
+                                out.push_str(&format!("    FullParagraph  pi={}  {}  {}  \"{}\"\n",
+                                    para_index, height, vpos_info, text_preview));
                             }
                             PageItem::PartialParagraph { para_index, start_line, end_line } => {
-                                out.push_str(&format!("    PartialParagraph  pi={}  lines={}..{}\n",
-                                    para_index, start_line, end_line));
+                                let vpos_info = format_vpos_range(paragraphs.get(*para_index), Some(*start_line), Some(*end_line));
+                                out.push_str(&format!("    PartialParagraph  pi={}  lines={}..{}  {}\n",
+                                    para_index, start_line, end_line, vpos_info));
                             }
                             PageItem::Table { para_index, control_index } => {
                                 let table_info = paragraphs.get(*para_index)
@@ -1371,8 +1373,9 @@ impl DocumentCore {
                                         } else { String::new() }
                                     })
                                     .unwrap_or_default();
-                                out.push_str(&format!("    Table          pi={} ci={}  {}\n",
-                                    para_index, control_index, table_info));
+                                let vpos_info = format_vpos_range(paragraphs.get(*para_index), None, None);
+                                out.push_str(&format!("    Table          pi={} ci={}  {}  {}\n",
+                                    para_index, control_index, table_info, vpos_info));
                             }
                             PageItem::PartialTable { para_index, control_index, start_row, end_row, is_continuation, .. } => {
                                 let table_info = paragraphs.get(*para_index)
@@ -1383,8 +1386,9 @@ impl DocumentCore {
                                         } else { String::new() }
                                     })
                                     .unwrap_or_default();
-                                out.push_str(&format!("    PartialTable   pi={} ci={}  rows={}..{}  cont={}  {}\n",
-                                    para_index, control_index, start_row, end_row, is_continuation, table_info));
+                                let vpos_info = format_vpos_range(paragraphs.get(*para_index), None, None);
+                                out.push_str(&format!("    PartialTable   pi={} ci={}  rows={}..{}  cont={}  {}  {}\n",
+                                    para_index, control_index, start_row, end_row, is_continuation, table_info, vpos_info));
                             }
                             PageItem::Shape { para_index, control_index } => {
                                 let shape_info = paragraphs.get(*para_index)
@@ -1398,8 +1402,9 @@ impl DocumentCore {
                                         }
                                     })
                                     .unwrap_or_default();
-                                out.push_str(&format!("    Shape          pi={} ci={}  {}\n",
-                                    para_index, control_index, shape_info));
+                                let vpos_info = format_vpos_range(paragraphs.get(*para_index), None, None);
+                                out.push_str(&format!("    Shape          pi={} ci={}  {}  {}\n",
+                                    para_index, control_index, shape_info, vpos_info));
                             }
                         }
                     }
@@ -1632,4 +1637,40 @@ impl DocumentCore {
     // 클립보드 API (내부)
     // =====================================================================
 
+}
+
+/// LINE_SEG vertical_pos 범위를 문자열로 포맷.
+///
+/// `start_line..end_line` 가 None 이면 문단 전체 범위.
+/// `vertical_pos == 0` 인 줄(문단 첫 줄 제외)을 vpos-reset 으로 마킹.
+fn format_vpos_range(
+    para: Option<&Paragraph>,
+    start_line: Option<usize>,
+    end_line: Option<usize>,
+) -> String {
+    let Some(p) = para else { return String::new() };
+    if p.line_segs.is_empty() { return String::new() };
+    let total = p.line_segs.len();
+    let s = start_line.unwrap_or(0).min(total.saturating_sub(1));
+    let e = end_line.unwrap_or(total - 1).min(total - 1);
+    if s > e { return String::new() };
+
+    let first = p.line_segs[s].vertical_pos;
+    let last = p.line_segs[e].vertical_pos;
+    let mut resets: Vec<usize> = Vec::new();
+    for i in s..=e {
+        // 문단 첫 줄(line 0)의 vpos는 자연 시작점이므로 제외
+        if i > 0 && p.line_segs[i].vertical_pos == 0 {
+            resets.push(i);
+        }
+    }
+    let mut s_out = if s == e {
+        format!("vpos={}", first)
+    } else {
+        format!("vpos={}..{}", first, last)
+    };
+    for r in resets {
+        s_out.push_str(&format!(" [vpos-reset@line{}]", r));
+    }
+    s_out
 }

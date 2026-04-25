@@ -51,6 +51,8 @@ pub struct SvgRenderer {
     overlay_para_bounds: std::collections::HashMap<usize, OverlayBounds>,
     /// 디버그 오버레이용: 표 경계 수집
     overlay_table_bounds: Vec<OverlayTableInfo>,
+    /// 디버그 오버레이용: vpos=0 리셋 위치 수집 (문단 첫 줄 제외)
+    overlay_vpos_resets: Vec<OverlayVposReset>,
     /// 디버그 오버레이용: 표/머리말/꼬리말 내부 깊이 (셀 내·헤더 문단 제외)
     overlay_skip_depth: u32,
     /// 디버그 오버레이용: 현재 페이지의 메인 섹션 인덱스 (-1이면 미설정)
@@ -72,6 +74,19 @@ struct OverlayBounds {
     y: f64,
     width: f64,
     height: f64,
+}
+
+/// 디버그 오버레이용 vpos=0 리셋 마커
+struct OverlayVposReset {
+    section_index: usize,
+    para_index: usize,
+    line_index: u32,
+    /// 줄 시작 y (px)
+    y: f64,
+    /// 줄 시작 x (px)
+    x: f64,
+    /// 줄 폭 (px)
+    width: f64,
 }
 
 /// 디버그 오버레이용 표 정보
@@ -102,6 +117,7 @@ impl SvgRenderer {
             debug_overlay: false,
             overlay_para_bounds: std::collections::HashMap::new(),
             overlay_table_bounds: Vec::new(),
+            overlay_vpos_resets: Vec::new(),
             overlay_skip_depth: 0,
             overlay_page_section: -1,
             arrow_marker_ids: std::collections::HashSet::new(),
@@ -414,6 +430,20 @@ impl SvgRenderer {
                                 entry.y = min_y;
                                 entry.width = max_x - min_x;
                                 entry.height = max_y - min_y;
+
+                                // vpos=0 리셋 검출: 문단 첫 줄(line 0) 제외하고 vertical_pos == 0
+                                if let (Some(li), Some(vp)) = (tl.line_index, tl.vpos) {
+                                    if li > 0 && vp == 0 {
+                                        self.overlay_vpos_resets.push(OverlayVposReset {
+                                            section_index: si,
+                                            para_index: pi,
+                                            line_index: li,
+                                            y: node.bbox.y,
+                                            x: node.bbox.x,
+                                            width: node.bbox.width,
+                                        });
+                                    }
+                                }
                             }
                         }
                     }
@@ -1718,6 +1748,28 @@ impl SvgRenderer {
         }
         self.overlay_table_bounds = table_bounds;
 
+        // vpos=0 리셋 위치 마커 (앰버 가로 점선 + 라벨)
+        let vpos_resets = std::mem::take(&mut self.overlay_vpos_resets);
+        for rs in &vpos_resets {
+            // 노란 가로선 (점선)
+            self.output.push_str(&format!(
+                "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"#FFB300\" stroke-width=\"1.5\" stroke-dasharray=\"6,3\"/>\n",
+                rs.x, rs.y, rs.x + rs.width, rs.y,
+            ));
+            // 라벨 (좌측, 가로선 위)
+            let label = format!("vpos-reset s{}:pi={}:line={}", rs.section_index, rs.para_index, rs.line_index);
+            let label_w = label.len() as f64 * 5.0 + 4.0;
+            self.output.push_str(&format!(
+                "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"11\" fill=\"#FFB300\" rx=\"2\"/>\n",
+                rs.x, rs.y - 11.0, label_w,
+            ));
+            self.output.push_str(&format!(
+                "<text x=\"{}\" y=\"{}\" font-family=\"monospace\" font-size=\"8\" fill=\"#000\" font-weight=\"bold\">{}</text>\n",
+                rs.x + 2.0, rs.y - 2.0, label,
+            ));
+        }
+        self.overlay_vpos_resets = vpos_resets;
+
         self.output.push_str("</g>\n");
     }
 }
@@ -1732,6 +1784,7 @@ impl Renderer for SvgRenderer {
         self.arrow_marker_ids.clear();
         self.overlay_para_bounds.clear();
         self.overlay_table_bounds.clear();
+        self.overlay_vpos_resets.clear();
         self.overlay_skip_depth = 0;
         self.overlay_page_section = -1;
         // xmlns:xlink 필수: SVG 가 <img> 로 로드될 때(예: blob URL 미리보기)

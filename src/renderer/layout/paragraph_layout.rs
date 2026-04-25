@@ -816,7 +816,10 @@ impl LayoutEngine {
             let line_id = tree.next_id();
             let mut line_node = RenderNode::new(
                 line_id,
-                RenderNodeType::TextLine(TextLineNode::with_para(line_height, baseline, section_index, para_index)),
+                RenderNodeType::TextLine({
+                    let vpos = para.and_then(|p| p.line_segs.get(line_idx)).map(|ls| ls.vertical_pos).unwrap_or(0);
+                    TextLineNode::with_para_vpos(line_height, baseline, section_index, para_index, line_idx as u32, vpos)
+                }),
                 BoundingBox::new(
                     col_area.x + effective_margin_left,
                     text_y,
