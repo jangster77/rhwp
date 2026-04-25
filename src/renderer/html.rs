@@ -3,9 +3,11 @@
 //! 렌더 트리를 HTML 문자열로 변환한다.
 //! CSS로 스타일링하여 접근성과 텍스트 선택을 지원한다.
 
+use base64::Engine;
 use super::{Renderer, TextStyle, ShapeStyle, LineStyle, PathCommand};
 use super::render_tree::{PageRenderTree, RenderNode, RenderNodeType};
 use super::layout::compute_char_positions;
+use super::svg::{detect_image_mime_type, convert_wmf_to_svg};
 use crate::model::style::UnderlineType;
 
 /// HTML 렌더러
@@ -394,11 +396,21 @@ impl Renderer for HtmlRenderer {
         ));
     }
 
-    fn draw_image(&mut self, _data: &[u8], x: f64, y: f64, w: f64, h: f64) {
-        // TODO: Base64 인코딩 후 <img> src 삽입
+    fn draw_image(&mut self, data: &[u8], x: f64, y: f64, w: f64, h: f64) {
+        let mime_type = detect_image_mime_type(data);
+        let (render_data, render_mime): (std::borrow::Cow<[u8]>, &str) = if mime_type == "image/x-wmf" {
+            match convert_wmf_to_svg(data) {
+                Some(svg_bytes) => (std::borrow::Cow::Owned(svg_bytes), "image/svg+xml"),
+                None => (std::borrow::Cow::Borrowed(data), mime_type),
+            }
+        } else {
+            (std::borrow::Cow::Borrowed(data), mime_type)
+        };
+        let base64_data = base64::engine::general_purpose::STANDARD.encode(&*render_data);
+        let data_uri = format!("data:{};base64,{}", render_mime, base64_data);
         self.output.push_str(&format!(
-            "<div class=\"hwp-image\" style=\"position:absolute;left:{}px;top:{}px;width:{}px;height:{}px;background:#eee;\"></div>\n",
-            x, y, w, h,
+            "<img class=\"hwp-image\" src=\"{}\" style=\"position:absolute;left:{}px;top:{}px;width:{}px;height:{}px;\" />\n",
+            data_uri, x, y, w, h,
         ));
     }
 
