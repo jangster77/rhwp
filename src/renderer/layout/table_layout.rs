@@ -1606,8 +1606,13 @@ impl LayoutEngine {
                             // 수식이 텍스트 run 사이에 인라인으로 배치되는 경우
                             // layout_composed_paragraph에서 이미 렌더링됨 → 건너뛰기
                             let has_text_in_para = para.text.chars().any(|c| c > '\u{001F}' && c != '\u{FFFC}');
-                            if has_text_in_para {
-                                // 텍스트가 있는 문단: paragraph_layout에서 처리됨
+                            // 빈 runs 셀 + TAC 수식: paragraph_layout(Task #287 경로)이 이미
+                            // 렌더 후 set_inline_shape_position 호출. 중복 emit 방지(Issue #301).
+                            let already_rendered_inline = tree
+                                .get_inline_shape_position(section_index, cp_idx, ctrl_idx)
+                                .is_some();
+                            if has_text_in_para || already_rendered_inline {
+                                // paragraph_layout 경로에서 이미 렌더됨
                                 inline_x += eq_w;
                             } else {
                                 // 수식만 있는 문단: 여기서 직접 렌더링
