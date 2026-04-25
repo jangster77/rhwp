@@ -5,7 +5,7 @@
 // 3. dist/ 폴더가 곧 Firefox 확장 프로그램
 
 import { execSync } from 'child_process';
-import { cpSync, mkdirSync, existsSync, renameSync } from 'fs';
+import { cpSync, mkdirSync, existsSync, renameSync, rmSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -31,6 +31,11 @@ function copy(src, dest, options = {}) {
 const EXCLUDE_FROM_DIST = /\.(test|spec)\.[mc]?[jt]sx?$/i;
 
 console.log('=== rhwp-firefox 빌드 시작 ===\n');
+
+if (existsSync(DIST)) {
+  rmSync(DIST, { recursive: true, force: true });
+  console.log(`  CLEAN: ${DIST}`);
+}
 
 // 1. Vite 빌드 (rhwp-studio → dist/)
 console.log('[1/4] Vite 빌드...');
