@@ -334,9 +334,21 @@ impl TypesetEngine {
         let (hf_entries, page_number_pos, new_page_numbers) =
             Self::collect_header_footer_controls(paragraphs, section_index);
 
+        // [Task #317 진단] env RHWP_TYPESET_TRACE=N (N=section_index)일 때 paragraph별 trace
+        let trace_section: Option<usize> = std::env::var("RHWP_TYPESET_TRACE")
+            .ok().and_then(|s| s.parse().ok());
+
         for (para_idx, para) in paragraphs.iter().enumerate() {
             // 표 컨트롤 감지
             let has_table = self.paragraph_has_table(para);
+
+            if trace_section == Some(section_index) {
+                eprintln!(
+                    "TRACE para={} pre: pages={} col={} cur_h={:.1} text='{}'",
+                    para_idx, st.pages.len(), st.current_column, st.current_height,
+                    para.text.chars().take(20).collect::<String>()
+                );
+            }
 
             // 다단 나누기
             if para.column_type == ColumnBreakType::MultiColumn {
@@ -363,12 +375,25 @@ impl TypesetEngine {
             if !has_table {
                 // --- 핵심: format → fits → place/split ---
                 let formatted = self.format_paragraph(para, composed.get(para_idx), styles);
+                if trace_section == Some(section_index) {
+                    eprintln!(
+                        "TRACE para={} fmt: total_h={:.1} for_fit={:.1}",
+                        para_idx, formatted.total_height, formatted.height_for_fit,
+                    );
+                }
                 self.typeset_paragraph(&mut st, para_idx, para, &formatted);
             } else {
                 // 표 문단: Phase 2에서 전환 예정. 현재는 기존 방식 호환용 stub.
                 self.typeset_table_paragraph(
                     &mut st, para_idx, para, composed.get(para_idx),
                     styles, measured_tables, page_def,
+                );
+            }
+
+            if trace_section == Some(section_index) {
+                eprintln!(
+                    "TRACE para={} post: pages={} col={} cur_h={:.1}",
+                    para_idx, st.pages.len(), st.current_column, st.current_height,
                 );
             }
 
