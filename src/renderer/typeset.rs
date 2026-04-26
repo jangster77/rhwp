@@ -330,8 +330,8 @@ impl TypesetEngine {
             footnote_separator_overhead, footnote_safety_margin,
         );
 
-        // 머리말/꼬리말/쪽 번호/새 번호 컨트롤 수집
-        let (hf_entries, page_number_pos, new_page_numbers) =
+        // 머리말/꼬리말/쪽 번호/새 번호/감추기 컨트롤 수집
+        let (hf_entries, page_number_pos, new_page_numbers, page_hides) =
             Self::collect_header_footer_controls(paragraphs, section_index);
 
         for (para_idx, para) in paragraphs.iter().enumerate() {
@@ -412,7 +412,7 @@ impl TypesetEngine {
         // 페이지 번호 + 머리말/꼬리말 할당
         Self::finalize_pages(
             &mut st.pages, &hf_entries, &page_number_pos,
-            &new_page_numbers, section_index,
+            &new_page_numbers, &page_hides, section_index,
         );
 
         PaginationResult { pages: st.pages, wrap_around_paras: Vec::new(), hidden_empty_paras: std::collections::HashSet::new() }
@@ -843,7 +843,9 @@ impl TypesetEngine {
                         }
                     }
                 }
-                Control::Picture(_) | Control::Equation(_) => {
+                Control::Shape(_) | Control::Picture(_) | Control::Equation(_) => {
+                    // 사각형/직선/타원 등 Shape 컨트롤도 PageItem::Shape 로 등록
+                    // (둥근사각형 글상자 "제 2 교시" 등이 누락되는 문제 차단)
                     st.current_items.push(PageItem::Shape {
                         para_index: para_idx,
                         control_index: ctrl_idx,
@@ -990,7 +992,14 @@ impl TypesetEngine {
         } else {
             pre_table_end_line
         };
-        let should_add_post_text = is_last_table && tac_table_count <= 1 && !para.text.is_empty() && total_lines > post_table_start;
+        // 중복 방지: 이전 표가 이미 같은 문단의 pre-text(start_line=0)를 추가했으면 건너뜀
+        // (engine.rs:1418-1421 와 동일한 가드 — 다중 TopAndBottom 표 문단에서
+        //  같은 line 범위가 두 번 emit되어 본문이 두 번 렌더되는 문제 차단)
+        let pre_text_exists = post_table_start == 0 && st.current_items.iter().any(|item| {
+            matches!(item, PageItem::PartialParagraph { para_index, start_line, .. }
+                if *para_index == para_idx && *start_line == 0)
+        });
+        let should_add_post_text = is_last_table && tac_table_count <= 1 && !para.text.is_empty() && total_lines > post_table_start && !pre_text_exists;
         if should_add_post_text {
             let post_height: f64 = fmt.line_advances_sum(post_table_start..total_lines);
             st.current_items.push(PageItem::PartialParagraph {
@@ -1451,10 +1460,12 @@ impl TypesetEngine {
         Vec<(usize, HeaderFooterRef, bool, HeaderFooterApply)>,
         Option<crate::model::control::PageNumberPos>,
         Vec<(usize, u16)>,
+        Vec<(usize, crate::model::control::PageHide)>,
     ) {
         let mut hf_entries = Vec::new();
         let mut page_number_pos = None;
         let mut new_page_numbers = Vec::new();
+        let mut page_hides: Vec<(usize, crate::model::control::PageHide)> = Vec::new();
 
         for (pi, para) in paragraphs.iter().enumerate() {
             for (ci, ctrl) in para.controls.iter().enumerate() {
@@ -1483,12 +1494,15 @@ impl TypesetEngine {
                             new_page_numbers.push((pi, nn.number));
                         }
                     }
+                    Control::PageHide(ph) => {
+                        page_hides.push((pi, ph.clone()));
+                    }
                     _ => {}
                 }
             }
         }
 
-        (hf_entries, page_number_pos, new_page_numbers)
+        (hf_entries, page_number_pos, new_page_numbers, page_hides)
     }
 
     /// 페이지 번호 + 머리말/꼬리말 최종 할당 (기존 Paginator::finalize_pages와 동일)
@@ -1497,6 +1511,7 @@ impl TypesetEngine {
         hf_entries: &[(usize, HeaderFooterRef, bool, HeaderFooterApply)],
         page_number_pos: &Option<crate::model::control::PageNumberPos>,
         new_page_numbers: &[(usize, u16)],
+        page_hides: &[(usize, crate::model::control::PageHide)],
         _section_index: usize,
     ) {
         // 기존 Paginator::finalize_pages 로직을 그대로 재사용
@@ -1561,6 +1576,25 @@ impl TypesetEngine {
             page.active_header = current_header.clone();
             page.active_footer = current_footer.clone();
             page.page_number_pos = page_number_pos.clone();
+
+            // PageHide: 해당 문단이 이 페이지에서 **처음** 시작하는 경우만 적용
+            // (engine.rs 의 동일 로직과 일치 — 머리말/꼬리말/바탕쪽/페이지번호 감추기)
+            for (ph_para, ph) in page_hides {
+                let starts = page.column_contents.iter().any(|col| {
+                    col.items.iter().any(|item| match item {
+                        PageItem::FullParagraph { para_index } => *para_index == *ph_para,
+                        PageItem::PartialParagraph { para_index, start_line, .. } =>
+                            *para_index == *ph_para && *start_line == 0,
+                        PageItem::Table { para_index, .. } => *para_index == *ph_para,
+                        PageItem::PartialTable { para_index, .. } => *para_index == *ph_para,
+                        PageItem::Shape { para_index, .. } => *para_index == *ph_para,
+                    })
+                });
+                if starts {
+                    page.page_hide = Some(ph.clone());
+                    break;
+                }
+            }
 
             page_num += 1;
         }
