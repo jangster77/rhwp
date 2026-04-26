@@ -939,14 +939,19 @@ impl LayoutEngine {
                     });
                     (0.0, paper_w)
                 }
-                HorzRelTo::Page => (col_area.x, col_area.width),
+                HorzRelTo::Page => {
+                    // Task #347: 본문 영역(body_area) 기준. 미설정 시 col_area 폴백.
+                    let body = self.current_body_area.get();
+                    if body.2 > 0.0 { (body.0, body.2) } else { (col_area.x, col_area.width) }
+                }
                 HorzRelTo::Para => (col_area.x + host_margin_left, col_area.width - host_margin_left),
                 _ => (col_area.x, col_area.width),
             };
             match horz_align {
                 HorzAlign::Left | HorzAlign::Inside => ref_x + h_offset,
                 HorzAlign::Center => ref_x + (ref_w - table_width).max(0.0) / 2.0 + h_offset,
-                HorzAlign::Right | HorzAlign::Outside => ref_x + (ref_w - table_width).max(0.0) + h_offset,
+                // Task #347: picture_footnote.rs:185와 동일하게 - h_offset (오른쪽 끝에서 안쪽으로 오프셋).
+                HorzAlign::Right | HorzAlign::Outside => ref_x + (ref_w - table_width).max(0.0) - h_offset,
             }
         } else {
             // 중첩 표: outer_margin_left 적용 + host_alignment에 따라 셀 내에서 정렬
@@ -991,7 +996,11 @@ impl LayoutEngine {
             // (HWP 스펙: Page=쪽 본문, Paper=용지 전체). 바탕쪽 문맥에서는
             // col_area = paper_area이므로 두 경로 결과가 동일하여 회귀 없음.
             let (ref_y, ref_h) = match vert_rel_to {
-                crate::model::shape::VertRelTo::Page => (col_area.y, col_area.height),
+                crate::model::shape::VertRelTo::Page => {
+                    // Task #347: 본문 영역(body_area) 기준. 미설정 시 col_area 폴백.
+                    let body = self.current_body_area.get();
+                    if body.3 > 0.0 { (body.1, body.3) } else { (col_area.y, col_area.height) }
+                }
                 crate::model::shape::VertRelTo::Para => (anchor_y, col_area.height - (anchor_y - col_area.y).max(0.0)),
                 crate::model::shape::VertRelTo::Paper => (0.0, page_h_approx),
             };
@@ -1014,10 +1023,17 @@ impl LayoutEngine {
             };
             // Para 기준 + bit 13: 본문 영역으로 제한
             // 앞선 표/텍스트가 차지한 영역(y_start) 아래로 밀어내고, 본문 영역 내로 클램핑
+            // Task #347: TopAndBottom 만 y_start 이하로 밀어냄. 글뒤로(BehindText) /
+            // 글앞으로(InFrontOfText) 표는 절대 위치 오버레이이므로 push-down 미적용.
             if matches!(vert_rel_to, crate::model::shape::VertRelTo::Para) {
                 let body_top = col_area.y;
                 let body_bottom = col_area.y + col_area.height - table_height;
-                raw_y.max(y_start).clamp(body_top, body_bottom.max(body_top))
+                let pushed = if matches!(table_text_wrap, crate::model::shape::TextWrap::TopAndBottom) {
+                    raw_y.max(y_start)
+                } else {
+                    raw_y
+                };
+                pushed.clamp(body_top, body_bottom.max(body_top))
             } else {
                 raw_y
             }
