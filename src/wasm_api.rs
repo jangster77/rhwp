@@ -2261,6 +2261,18 @@ impl HwpDocument {
         ).map_err(|e| e.into())
     }
 
+    /// 단일 치환 (검색어 기반) — 첫 번째 매치만 교체
+    #[wasm_bindgen(js_name = replaceOne)]
+    pub fn replace_one(
+        &mut self,
+        query: &str,
+        new_text: &str,
+        case_sensitive: bool,
+    ) -> Result<String, JsValue> {
+        self.core.replace_one_native(query, new_text, case_sensitive)
+            .map_err(|e| e.into())
+    }
+
     /// 전체 치환
     #[wasm_bindgen(js_name = replaceAll)]
     pub fn replace_all(

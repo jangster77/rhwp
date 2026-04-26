@@ -1279,6 +1279,11 @@ export class WasmBridge {
     return JSON.parse((this.doc as any).replaceText(sec, para, charOffset, length, newText));
   }
 
+  replaceOne(query: string, newText: string, caseSensitive: boolean): import('./types').ReplaceOneResult {
+    if (!this.doc || typeof (this.doc as any).replaceOne !== 'function') return { ok: false };
+    return JSON.parse((this.doc as any).replaceOne(query, newText, caseSensitive));
+  }
+
   replaceAll(query: string, newText: string, caseSensitive: boolean): import('./types').ReplaceAllResult {
     if (!this.doc || typeof (this.doc as any).replaceAll !== 'function') return { ok: false };
     return JSON.parse((this.doc as any).replaceAll(query, newText, caseSensitive));

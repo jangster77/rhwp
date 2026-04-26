@@ -2161,11 +2161,21 @@ impl Renderer for SvgRenderer {
         self.draw_ellipse_with_gradient(cx, cy, rx, ry, style, None);
     }
 
-    fn draw_image(&mut self, _data: &[u8], x: f64, y: f64, w: f64, h: f64) {
-        // TODO: Base64 인코딩 후 data URI 삽입
+    fn draw_image(&mut self, data: &[u8], x: f64, y: f64, w: f64, h: f64) {
+        let mime_type = detect_image_mime_type(data);
+        let (render_data, render_mime): (std::borrow::Cow<[u8]>, &str) = if mime_type == "image/x-wmf" {
+            match convert_wmf_to_svg(data) {
+                Some(svg_bytes) => (std::borrow::Cow::Owned(svg_bytes), "image/svg+xml"),
+                None => (std::borrow::Cow::Borrowed(data), mime_type),
+            }
+        } else {
+            (std::borrow::Cow::Borrowed(data), mime_type)
+        };
+        let base64_data = base64::engine::general_purpose::STANDARD.encode(&*render_data);
+        let data_uri = format!("data:{};base64,{}", render_mime, base64_data);
         self.output.push_str(&format!(
-            "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"#eeeeee\" stroke=\"#cccccc\"/>\n",
-            x, y, w, h,
+            "<image x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" preserveAspectRatio=\"none\" href=\"{}\"/>\n",
+            x, y, w, h, data_uri,
         ));
     }
 
@@ -2224,7 +2234,7 @@ pub(crate) fn bmp_bytes_to_png_bytes(data: &[u8]) -> Option<Vec<u8>> {
 }
 
 /// 이미지 데이터에서 MIME 타입 감지
-fn detect_image_mime_type(data: &[u8]) -> &'static str {
+pub(crate) fn detect_image_mime_type(data: &[u8]) -> &'static str {
     if data.len() >= 8 {
         // PNG: 89 50 4E 47 0D 0A 1A 0A
         if data.starts_with(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) {
