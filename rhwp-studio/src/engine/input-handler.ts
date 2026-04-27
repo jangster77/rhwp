@@ -216,10 +216,12 @@ export class InputHandler {
   // 양식 개체 오버레이
   private formOverlay: HTMLElement | null = null;
 
-  // 투명선 자동 활성화 상태
-  private wasInCell = false;
-  private manualTransparentBorders = false;
-  private autoTransparentBorders = false;
+  // [Task #394] 셀 진입 자동 ON 로직 비활성화 — checkTransparentBordersTransition 와 동시 주석 처리.
+  // 되돌리려면 아래 3 개 변수 + 호출 지점 + 메서드 본체 + 이벤트 핸들러의 주석을 동시에 해제.
+  // // 투명선 자동 활성화 상태
+  // private wasInCell = false;
+  // private manualTransparentBorders = false;
+  // private autoTransparentBorders = false;
 
   // IME 조합 상태
   private isComposing = false;
@@ -387,10 +389,12 @@ export class InputHandler {
       });
     });
 
-    // 투명선 수동 토글 상태 추적
-    eventBus.on('transparent-borders-changed', (show) => {
-      this.manualTransparentBorders = show as boolean;
-    });
+    // [Task #394] 셀 진입 자동 ON 로직 비활성화 — manual 추적 불필요.
+    // transparent-borders-changed 이벤트 자체는 view.ts 에서 emit 되므로 보존됨 (다른 구독자가 사용 가능).
+    // // 투명선 수동 토글 상태 추적
+    // eventBus.on('transparent-borders-changed', (show) => {
+    //   this.manualTransparentBorders = show as boolean;
+    // });
 
     // Toolbar에서 서식 적용 요청 수신 (글꼴명, 크기, 색상 — 커맨드 시스템 미경유)
     eventBus.on('format-char', (props) => {
@@ -1770,7 +1774,11 @@ export class InputHandler {
     _picture.finishPictureRotateDrag.call(this, e);
   }
 
-  /** 셀 진입/탈출 시 투명선 자동 ON/OFF */
+  /* [Task #394] 셀 진입 자동 ON 로직 비활성화 — 호출 지점 (updateCaretAndScroll, updateCaretNoScroll)
+     의 호출도 같이 주석 처리됨. 되돌리려면 본 블록 주석 + 호출 지점 주석 + 상태 변수 / 이벤트 핸들러
+     주석을 동시에 풀면 이전 동작 복원.
+
+  // 셀 진입/탈출 시 투명선 자동 ON/OFF
   private checkTransparentBordersTransition(): void {
     const nowInCell = this.cursor.isInCell() && !this.cursor.isInTextBox();
     if (nowInCell && !this.wasInCell) {
@@ -1796,6 +1804,7 @@ export class InputHandler {
     }
     this.wasInCell = nowInCell;
   }
+  */
 
   /** 캐럿이 화면 밖이면 스크롤을 조정한다 */
   private scrollCaretIntoView(rect: import('@/core/types').CursorRect): void {
