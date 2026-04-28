@@ -2704,13 +2704,18 @@ impl LayoutEngine {
                     num_str
                 };
 
-                // 각 줄의 텍스트에서 연속된 두 공백("  ")을 찾아 번호로 대체
-                // HWP/HWPX 모두 AutoNumber 위치에 공백 placeholder 삽입
+                // 각 줄의 텍스트에서 AutoNumber 위치를 찾아 번호로 대체
+                // HWP5/HWPX: AutoNumber 문자(0x0012)를 공백(' ')으로 저장 → "  " 패턴 탐색
+                // HWP3: AutoNumber 위치를 U+FFFC(OBJECT REPLACEMENT CHARACTER)로 저장 → '\u{fffc}' 탐색
                 for line in &mut composed.lines {
                     for run in &mut line.runs {
                         if let Some(pos) = run.text.find("  ") {
                             run.text = format!("{}{}{}", &run.text[..pos+1], num_str, &run.text[pos+1..]);
-                            return; // 첫 번째 발견 시 처리 완료
+                            return;
+                        }
+                        if run.text.contains('\u{fffc}') {
+                            run.text = run.text.replacen('\u{fffc}', &num_str, 1);
+                            return;
                         }
                     }
                 }

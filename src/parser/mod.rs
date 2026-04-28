@@ -25,6 +25,7 @@ pub mod crypto;
 pub mod doc_info;
 pub mod header;
 pub mod hwpx;
+pub mod hwp3;
 pub mod record;
 pub mod tags;
 
@@ -76,6 +77,7 @@ pub enum ParseError {
     BodyTextError(body_text::BodyTextError),
     CryptoError(crypto::CryptoError),
     HwpxError(hwpx::HwpxError),
+    Hwp3Error(hwp3::Hwp3Error),
     EncryptedDocument,
     /// 감지는 되었으나 지원하지 않는 포맷 (Issue #265)
     UnsupportedFormat { format: &'static str, hint: &'static str },
@@ -90,6 +92,7 @@ impl std::fmt::Display for ParseError {
             ParseError::BodyTextError(e) => write!(f, "BodyText 오류: {}", e),
             ParseError::CryptoError(e) => write!(f, "암호 오류: {}", e),
             ParseError::HwpxError(e) => write!(f, "HWPX 오류: {}", e),
+            ParseError::Hwp3Error(e) => write!(f, "HWP 3.0 오류: {}", e),
             ParseError::EncryptedDocument => write!(f, "암호화된 문서는 지원하지 않습니다"),
             ParseError::UnsupportedFormat { format, hint } =>
                 write!(f, "지원하지 않는 포맷입니다: {format}. {hint}"),
@@ -102,6 +105,12 @@ impl std::error::Error for ParseError {}
 impl From<hwpx::HwpxError> for ParseError {
     fn from(e: hwpx::HwpxError) -> Self {
         ParseError::HwpxError(e)
+    }
+}
+
+impl From<hwp3::Hwp3Error> for ParseError {
+    fn from(e: hwp3::Hwp3Error) -> Self {
+        ParseError::Hwp3Error(e)
     }
 }
 
@@ -365,6 +374,11 @@ fn load_bin_data_content_lenient(
 pub(crate) fn assign_auto_numbers(doc: &mut Document) {
     use crate::model::control::AutoNumberType;
 
+    // HWP3 문서 여부 (version.major=3으로 표시됨)
+    // HWP3에서는 Control::Picture 자체가 그림 카운터를 올린다 (캡션 유무 무관).
+    // HWP5/HWPX에서는 캡션 내 AutoNumber(Picture)를 만날 때만 카운터를 올린다.
+    let is_hwp3 = doc.header.version.major == 3;
+
     // 번호 종류별 카운터 — DocProperties 시작번호로 초기화
     let mut counters = [
         doc.doc_properties.page_start_num.saturating_sub(1),
@@ -405,18 +419,23 @@ pub(crate) fn assign_auto_numbers(doc: &mut Document) {
 
         // 본문 문단
         for para in &mut section.paragraphs {
-            assign_auto_numbers_in_controls(&mut para.controls, &mut counters, counter_index);
+            assign_auto_numbers_in_controls(&mut para.controls, &mut counters, counter_index, is_hwp3);
         }
     }
 }
 
 /// 컨트롤 목록에서 AutoNumber를 찾아 번호를 할당한다.
+///
+/// `is_hwp3`: HWP3 문서인 경우 true. HWP3에서는 Control::Picture 자체가
+/// 그림 카운터를 증가시키고, 캡션의 AutoNumber(Picture)는 카운터를
+/// 재증가시키지 않고 현재 값을 사용한다.
 fn assign_auto_numbers_in_controls(
     controls: &mut [crate::model::control::Control],
     counters: &mut [u16; 6],
     counter_index: fn(crate::model::control::AutoNumberType) -> usize,
+    is_hwp3: bool,
 ) {
-    use crate::model::control::Control;
+    use crate::model::control::{Control, AutoNumberType};
 
     for ctrl in controls.iter_mut() {
         match ctrl {
@@ -429,21 +448,48 @@ fn assign_auto_numbers_in_controls(
                 // 표 내부 셀의 문단도 처리
                 for cell in &mut table.cells {
                     for para in &mut cell.paragraphs {
-                        assign_auto_numbers_in_controls(&mut para.controls, counters, counter_index);
+                        assign_auto_numbers_in_controls(&mut para.controls, counters, counter_index, is_hwp3);
                     }
                 }
                 // 표 캡션 처리
                 if let Some(ref mut caption) = table.caption {
                     for para in &mut caption.paragraphs {
-                        assign_auto_numbers_in_controls(&mut para.controls, counters, counter_index);
+                        assign_auto_numbers_in_controls(&mut para.controls, counters, counter_index, is_hwp3);
                     }
                 }
             }
             Control::Picture(pic) => {
-                // 그림 캡션 처리
-                if let Some(ref mut caption) = pic.caption {
-                    for para in &mut caption.paragraphs {
-                        assign_auto_numbers_in_controls(&mut para.controls, counters, counter_index);
+                if is_hwp3 {
+                    // HWP3: 그림 개체 자체가 그림 카운터를 올린다 (캡션 유무 무관).
+                    // 꼬리말/머리말의 tac=true 그림도 카운터에 포함된다.
+                    counters[3] += 1;
+                    let pic_num = counters[3];
+                    if let Some(ref mut caption) = pic.caption {
+                        for para in &mut caption.paragraphs {
+                            for cap_ctrl in &mut para.controls {
+                                match cap_ctrl {
+                                    Control::AutoNumber(an) if an.number_type == AutoNumberType::Picture => {
+                                        // 이미 올린 카운터 값을 사용, 재증가 없음
+                                        an.assigned_number = pic_num;
+                                    }
+                                    other => {
+                                        assign_auto_numbers_in_controls(
+                                            std::slice::from_mut(other),
+                                            counters,
+                                            counter_index,
+                                            is_hwp3,
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // HWP5/HWPX: 캡션 내 AutoNumber(Picture)를 만날 때만 카운터 증가
+                    if let Some(ref mut caption) = pic.caption {
+                        for para in &mut caption.paragraphs {
+                            assign_auto_numbers_in_controls(&mut para.controls, counters, counter_index, is_hwp3);
+                        }
                     }
                 }
             }
@@ -452,7 +498,7 @@ fn assign_auto_numbers_in_controls(
                 if let crate::model::shape::ShapeObject::Group(ref mut group) = shape.as_mut() {
                     if let Some(ref mut caption) = group.caption {
                         for para in &mut caption.paragraphs {
-                            assign_auto_numbers_in_controls(&mut para.controls, counters, counter_index);
+                            assign_auto_numbers_in_controls(&mut para.controls, counters, counter_index, is_hwp3);
                         }
                     }
                 }
@@ -460,35 +506,35 @@ fn assign_auto_numbers_in_controls(
                 if let Some(ref mut drawing) = shape.drawing_mut() {
                     if let Some(ref mut caption) = drawing.caption {
                         for para in &mut caption.paragraphs {
-                            assign_auto_numbers_in_controls(&mut para.controls, counters, counter_index);
+                            assign_auto_numbers_in_controls(&mut para.controls, counters, counter_index, is_hwp3);
                         }
                     }
                     // 글상자 내부 문단의 자동 번호 처리
                     if let Some(ref mut text_box) = drawing.text_box {
                         for para in &mut text_box.paragraphs {
-                            assign_auto_numbers_in_controls(&mut para.controls, counters, counter_index);
+                            assign_auto_numbers_in_controls(&mut para.controls, counters, counter_index, is_hwp3);
                         }
                     }
                 }
             }
             Control::Header(h) => {
                 for para in &mut h.paragraphs {
-                    assign_auto_numbers_in_controls(&mut para.controls, counters, counter_index);
+                    assign_auto_numbers_in_controls(&mut para.controls, counters, counter_index, is_hwp3);
                 }
             }
             Control::Footer(f) => {
                 for para in &mut f.paragraphs {
-                    assign_auto_numbers_in_controls(&mut para.controls, counters, counter_index);
+                    assign_auto_numbers_in_controls(&mut para.controls, counters, counter_index, is_hwp3);
                 }
             }
             Control::Footnote(fn_) => {
                 for para in &mut fn_.paragraphs {
-                    assign_auto_numbers_in_controls(&mut para.controls, counters, counter_index);
+                    assign_auto_numbers_in_controls(&mut para.controls, counters, counter_index, is_hwp3);
                 }
             }
             Control::Endnote(en) => {
                 for para in &mut en.paragraphs {
-                    assign_auto_numbers_in_controls(&mut para.controls, counters, counter_index);
+                    assign_auto_numbers_in_controls(&mut para.controls, counters, counter_index, is_hwp3);
                 }
             }
             Control::NewNumber(nn) => {
@@ -523,7 +569,9 @@ pub struct HwpxParser;
 
 impl DocumentParser for HwpxParser {
     fn parse(&self, data: &[u8]) -> Result<Document, ParseError> {
-        hwpx::parse_hwpx(data).map_err(ParseError::from)
+        let mut doc = hwpx::parse_hwpx(data).map_err(ParseError::from)?;
+        assign_auto_numbers(&mut doc);
+        Ok(doc)
     }
 }
 
@@ -531,12 +579,11 @@ impl DocumentParser for HwpxParser {
 pub fn parse_document(data: &[u8]) -> Result<Document, ParseError> {
     match detect_format(data) {
         FileFormat::Hwpx => HwpxParser.parse(data),
-        FileFormat::Hwp3 => Err(ParseError::UnsupportedFormat {
-            format: "HWP 3.0",
-            hint: "현재 rhwp 는 HWP 5.0 과 HWPX 만 지원합니다. \
-                   한컴오피스 또는 LibreOffice 에서 파일을 연 뒤 \
-                   HWP 5.0 포맷으로 다시 저장하여 시도해주세요.",
-        }),
+        FileFormat::Hwp3 => {
+            let mut doc = hwp3::parse_hwp3(data).map_err(ParseError::from)?;
+            assign_auto_numbers(&mut doc);
+            Ok(doc)
+        },
         _ => HwpParser.parse(data),
     }
 }
@@ -851,31 +898,25 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_document_hwp3_returns_unsupported_error() {
-        // Issue #265: HWP 3.0 헤더 → UnsupportedFormat 에러
+    fn test_parse_document_hwp3_too_short_errors() {
+        // Issue #265 (updated): HWP 3.0 헤더 (now supported, but data is incomplete)
         let hwp3_header = b"HWP Document File V3.00 \x1a\x01\x02\x03\x04\x05";
         let err = parse_document(hwp3_header).unwrap_err();
         match err {
-            ParseError::UnsupportedFormat { format, hint } => {
-                assert_eq!(format, "HWP 3.0");
-                assert!(hint.contains("HWP 5.0"));
-            }
-            other => panic!("expected UnsupportedFormat, got {other:?}"),
+            ParseError::Hwp3Error(_) => {}
+            other => panic!("expected Hwp3Error, got {other:?}"),
         }
     }
 
     #[test]
     fn test_parse_document_issue_265_sample() {
         // Issue #265: 실제 제보 파일 samples/issue_265.hwp 가 HWP 3.0 으로
-        // 감지되고 친절한 에러 메시지를 반환하는지 확인.
+        // 감지되고 정상적으로 파싱되는지 확인.
         let data = std::fs::read("samples/issue_265.hwp")
             .expect("samples/issue_265.hwp should exist in repo");
         assert_eq!(detect_format(&data), FileFormat::Hwp3);
-        let err = parse_document(&data).unwrap_err();
-        assert!(matches!(err, ParseError::UnsupportedFormat { .. }));
-        let msg = format!("{err}");
-        assert!(msg.contains("HWP 3.0"), "message should mention HWP 3.0: {msg}");
-        assert!(msg.contains("HWP 5.0"), "message should mention HWP 5.0: {msg}");
+        let doc = parse_document(&data).expect("Should successfully parse HWP3 sample");
+        assert!(doc.sections.len() > 0, "Document should have at least one section");
     }
 
     #[test]
