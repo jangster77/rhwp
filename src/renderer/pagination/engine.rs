@@ -1489,13 +1489,26 @@ impl Paginator {
         };
         let remaining_on_page = table_available_height - st.current_height - host_text_height - v_offset_px;
 
-        let first_row_h = if row_count > 0 { mt.row_heights[0] } else { 0.0 };
+        // Task #398 v2: 보호 블록(2~3 rows)만 블록 단위 advance.
+        // 큰 rowspan(>3)은 행 단위 분할 허용 (HanCom-compat).
+        let (first_block_start, first_block_end, first_block_h) = if row_count > 0 {
+            mt.row_block_for(0)
+        } else { (0, 0, 0.0) };
+        let first_block_size = first_block_end.saturating_sub(first_block_start);
+        let first_block_is_single_row = first_block_size == 1;
+        let first_block_protected = first_block_size >= 2 && first_block_size <= crate::renderer::height_measurer::BLOCK_UNIT_MAX_ROWS;
         let can_intra_split_early = !mt.cells.is_empty();
+        let split_unit_h = if first_block_protected {
+            first_block_h
+        } else {
+            mt.row_heights.first().copied().unwrap_or(0.0)
+        };
 
-        if remaining_on_page < first_row_h && !st.current_items.is_empty() {
-            // 첫 행이 인트라-로우 분할 가능하고 남은 공간에 최소 콘텐츠가 들어갈 수 있으면
-            // 현재 페이지에서 분할 시도 (새 페이지로 밀지 않음)
-            let first_row_splittable = can_intra_split_early && mt.is_row_splittable(0);
+        if remaining_on_page < split_unit_h && !st.current_items.is_empty() {
+            // 인트라-로우 분할은 단일 행 또는 큰 블록(>3)에서만 시도. 보호 블록은 묶음 단위 advance.
+            let first_row_splittable = (first_block_is_single_row || !first_block_protected)
+                && can_intra_split_early
+                && mt.is_row_splittable(0);
             let min_content = if first_row_splittable {
                 mt.min_first_line_height_for_row(0, 0.0) + mt.max_padding_for_row(0)
             } else {
@@ -1603,11 +1616,22 @@ impl Paginator {
             {
                 const MIN_SPLIT_CONTENT_PX: f64 = 10.0;
 
-                let approx_end = mt.find_break_row(avail_for_rows, cursor_row, effective_first_row_h);
+                let approx_end_raw = mt.find_break_row(avail_for_rows, cursor_row, effective_first_row_h);
+                // Task #398: rowspan 묶음 중간에서 잘리지 않도록 블록 경계로 스냅
+                let approx_end = mt.snap_to_block_boundary(approx_end_raw);
+
+                // cursor_row가 속한 블록 정보 (인트라-로우 분할 가드)
+                let (cur_b_start, cur_b_end, _) = mt.row_block_for(cursor_row);
+                let cur_block_size = cur_b_end.saturating_sub(cur_b_start);
+                let cur_block_single = cur_block_size == 1;
+                let cur_block_protected = cur_block_size >= 2 && cur_block_size <= crate::renderer::height_measurer::BLOCK_UNIT_MAX_ROWS;
+                // 큰 블록(>3) 또는 단일 행은 분할 가능; 보호 블록(2~3)은 분할 불가
+                let cur_can_intra_split = (cur_block_single || !cur_block_protected) && can_intra_split;
 
                 if approx_end <= cursor_row {
                     let r = cursor_row;
-                    let splittable = can_intra_split && mt.is_row_splittable(r);
+                    // 인트라-로우 분할은 보호 블록(2~3)이 아닌 경우 (단일 행 또는 큰 블록>3) 허용
+                    let splittable = cur_can_intra_split && mt.is_row_splittable(r);
                     if splittable {
                         let padding = mt.max_padding_for_row(r);
                         let avail_content = (avail_for_rows - padding).max(0.0);
@@ -1623,7 +1647,7 @@ impl Paginator {
                         } else {
                             end_row = r + 1;
                         }
-                    } else if can_intra_split && effective_first_row_h > avail_for_rows {
+                    } else if cur_can_intra_split && effective_first_row_h > avail_for_rows {
                         // 행이 분할 불가능하지만 페이지보다 클 때: 가용 높이에 맞춰 강제 분할
                         let padding = mt.max_padding_for_row(r);
                         let avail_content = (avail_for_rows - padding).max(0.0);
@@ -1633,6 +1657,9 @@ impl Paginator {
                         } else {
                             end_row = r + 1;
                         }
+                    } else if cur_block_protected {
+                        // Task #398: 보호 블록(2~3 rows)이 들어가지 않으면 블록 전체 배치.
+                        end_row = cur_b_end;
                     } else {
                         end_row = r + 1;
                     }
@@ -1646,7 +1673,13 @@ impl Paginator {
                     };
                     let range_h = mt.range_height(cursor_row, approx_end) - delta;
                     let remaining_avail = avail_for_rows - range_h;
-                    if can_intra_split && mt.is_row_splittable(r) {
+                    // Task #398 v2: 분할 후보 r의 블록 보호 검사 (보호 블록만 분할 차단)
+                    let (next_b_start, next_b_end, _) = mt.row_block_for(r);
+                    let next_block_size = next_b_end.saturating_sub(next_b_start);
+                    let next_block_single = next_block_size == 1;
+                    let next_block_protected = next_block_size >= 2 && next_block_size <= crate::renderer::height_measurer::BLOCK_UNIT_MAX_ROWS;
+                    let next_can_intra_split = (next_block_single || !next_block_protected) && can_intra_split;
+                    if next_can_intra_split && mt.is_row_splittable(r) {
                         let row_cs = cs;
                         let padding = mt.max_padding_for_row(r);
                         let avail_content_for_r = (remaining_avail - row_cs - padding).max(0.0);
@@ -1660,9 +1693,10 @@ impl Paginator {
                             end_row = r + 1;
                             split_end_limit = avail_content_for_r;
                         }
-                    } else if can_intra_split && mt.row_heights[r] > base_available_height {
+                    } else if next_can_intra_split && mt.row_heights[r] > base_available_height {
                         // 행이 splittable=false이지만 전체 페이지 가용높이보다 큰 경우:
-                        // 다음 페이지로 넘겨도 들어가지 않으므로 가용 공간에 맞춰 강제 intra-row split
+                        // 다음 페이지로 넘겨도 들어가지 않으므로 가용 공간에 맞춰 강제 intra-row split.
+                        // Task #398: 단일 행 블록에서만 적용 (rowspan 묶음 보호).
                         let row_cs = cs;
                         let padding = mt.max_padding_for_row(r);
                         let avail_content_for_r = (remaining_avail - row_cs - padding).max(0.0);
