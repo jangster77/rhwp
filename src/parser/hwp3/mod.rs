@@ -418,7 +418,9 @@ pub(crate) fn parse_paragraph_list(
                                     _ => {}
                                 }
 
+                                // 그림 피함(offset 9): 0=자리차지(TopAndBottom), 1=투명, 2=어울림
                                 let text_wrap = info_buf[9];
+                                // table.common.treat_as_char remains ref_pos == 0
                                 table.common.text_wrap = match text_wrap {
                                     0 => crate::model::shape::TextWrap::TopAndBottom, // 자리차지
                                     1 => crate::model::shape::TextWrap::BehindText, // 투명 (글자 뒤)
@@ -676,15 +678,14 @@ pub(crate) fn parse_paragraph_list(
                                 _ => {}
                             }
 
+                            // 그림 피함(offset 9): 0=자리차지(TopAndBottom), 1=투명(InFrontOfText), 2=어울림(Square)
                             let text_wrap = info_buf[9];
-                            // println!("PICTURE text_wrap byte: {}", text_wrap);
                             pic.common.text_wrap = match text_wrap {
                                 0 => crate::model::shape::TextWrap::TopAndBottom, // 자리차지
                                 1 => crate::model::shape::TextWrap::InFrontOfText, // 투명 (글자 앞)
                                 2 => crate::model::shape::TextWrap::Square, // 어울림
                                 _ => crate::model::shape::TextWrap::Square,
                             };
-                            // println!("PICTURE mapped text_wrap: {:?}", pic.common.text_wrap);
                             
                             pic.common.margin.left = (&info_buf[18..20]).read_i16::<LittleEndian>().unwrap_or(0) * 4;
                             pic.common.margin.right = (&info_buf[20..22]).read_i16::<LittleEndian>().unwrap_or(0) * 4;
@@ -1250,8 +1251,24 @@ pub(crate) fn parse_paragraph_list(
         } else {
             para.line_segs = line_segs;
         }
-        
 
+        // HWP3 후처리: tac=false(부동) + 자리차지(TopAndBottom) 그림의
+        // caption.width=0 보정 (layout_body_picture 캡션 렌더링에 그림 너비 사용).
+        // paginator는 Control::Picture 처리 시 pic_h를 current_height에 추가하므로
+        // line_height 보정은 이중 계산을 유발한다 — caption.width만 보정한다.
+        for ctrl in para.controls.iter_mut() {
+            if let crate::model::control::Control::Picture(pic) = ctrl {
+                if !pic.common.treat_as_char
+                    && pic.common.text_wrap == crate::model::shape::TextWrap::TopAndBottom
+                {
+                    if let Some(ref mut caption) = pic.caption {
+                        if caption.width == 0 {
+                            caption.width = pic.common.width;
+                        }
+                    }
+                }
+            }
+        }
 
         paragraphs.push(para);
     }
@@ -1270,6 +1287,8 @@ pub fn parse_hwp3(data: &[u8]) -> Result<Document, Hwp3Error> {
 
     // 기본 Document 껍데기를 생성한다.
     let mut doc = Document::default();
+    // HWP3 문서임을 표시 (자동번호 카운팅 방식이 HWP5와 다름)
+    doc.header.version.major = 3;
 
     let mut cursor = Cursor::new(&data[30..]); // 파일 인식 정보(30 바이트) 건너뜀
 
