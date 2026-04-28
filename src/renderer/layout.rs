@@ -2579,6 +2579,8 @@ impl LayoutEngine {
                                     control_index: Some(control_index),
                                     crop,
                                     effect: pic.image_attr.effect,
+                                    brightness: pic.image_attr.brightness,
+                                    contrast: pic.image_attr.contrast,
                                     ..ImageNode::new(bin_data_id, image_data)
                                 }),
                                 BoundingBox::new(pic_x, pic_y, pic_w, pic_h),
