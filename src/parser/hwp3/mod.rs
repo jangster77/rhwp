@@ -46,6 +46,48 @@ impl From<special_char::Hwp3SpecialCharError> for Hwp3Error {
     }
 }
 
+/// HWP3 개체의 CommonObjAttr 필드들에서 HWP5 attr 비트필드를 계산한다.
+/// serialize_common_obj_attr이 common.attr 값을 직접 기록하므로,
+/// 필드를 설정한 뒤 반드시 이 함수로 attr을 갱신해야 저장→재열기 후 속성이 유지된다.
+fn build_common_obj_attr(common: &crate::model::shape::CommonObjAttr) -> u32 {
+    use crate::model::shape::{VertRelTo, HorzRelTo, VertAlign, HorzAlign, TextWrap};
+    let mut attr: u32 = 0;
+    if common.treat_as_char { attr |= 0x01; }
+    attr |= (match common.vert_rel_to {
+        VertRelTo::Paper  => 0u32,
+        VertRelTo::Page   => 1,
+        VertRelTo::Para   => 2,
+    }) << 3;
+    attr |= (match common.vert_align {
+        VertAlign::Top     => 0u32,
+        VertAlign::Center  => 1,
+        VertAlign::Bottom  => 2,
+        VertAlign::Inside  => 3,
+        VertAlign::Outside => 4,
+    }) << 5;
+    attr |= (match common.horz_rel_to {
+        HorzRelTo::Paper  => 0u32,
+        HorzRelTo::Page   => 1,
+        HorzRelTo::Column => 2,
+        HorzRelTo::Para   => 3,
+    }) << 8;
+    attr |= (match common.horz_align {
+        HorzAlign::Left    => 0u32,
+        HorzAlign::Center  => 1,
+        HorzAlign::Right   => 2,
+        HorzAlign::Inside  => 3,
+        HorzAlign::Outside => 4,
+    }) << 10;
+    attr |= (match common.text_wrap {
+        TextWrap::Square        => 0u32,
+        TextWrap::TopAndBottom  => 1,
+        TextWrap::BehindText    => 2,
+        TextWrap::InFrontOfText => 3,
+        _                       => 0,
+    }) << 21;
+    attr
+}
+
 pub(crate) fn convert_char_shape(hwp3_cs: &crate::parser::hwp3::records::Hwp3CharShape) -> crate::model::style::CharShape {
     let mut cs = crate::model::style::CharShape::default();
     // HWP 3.0에서 크기는 pt당 25 단위로 주어집니다. 내부 모델의 base_size는 HWPUNIT(pt당 100 단위)입니다.
@@ -456,6 +498,7 @@ pub(crate) fn parse_paragraph_list(
                                     table.common.vert_align = crate::model::shape::VertAlign::Top;
                                     table.common.vertical_offset = (vert_align as i32 * 4) as u32;
                                 }
+                                table.common.attr = build_common_obj_attr(&table.common);
 
                                 let cell_padding_left = (&info_buf[34..36]).read_i16::<LittleEndian>().unwrap_or(0) as u32 * 4;
                                 let cell_padding_right = (&info_buf[36..38]).read_i16::<LittleEndian>().unwrap_or(0) as u32 * 4;
@@ -725,7 +768,8 @@ pub(crate) fn parse_paragraph_list(
                                 pic.common.vert_align = crate::model::shape::VertAlign::Top;
                                 pic.common.vertical_offset = (vert_align as i32 * 4) as u32;
                             }
-                            
+                            pic.common.attr = build_common_obj_attr(&pic.common);
+
                             let n_ext_from_buf = (&info_buf[0..4]).read_u32::<LittleEndian>().unwrap_or(0);
                             let n_ext_from_header = header_val1.saturating_sub(348);
                             
