@@ -524,9 +524,23 @@ impl LayoutEngine {
                             .get(para.para_shape_id as usize)
                             .map(|s| s.alignment)
                             .unwrap_or(Alignment::Left);
+                        // Task #445: 머리말/꼬리말 영역의 wrap=TopAndBottom + vert=Para 표는
+                        // 첫 라인의 line_height/2 만큼 아래로 anchor 됨 (HWP 가 line center
+                        // 기준으로 표를 배치하는 동작과 일치). 이 보정이 없으면 페이지 번호
+                        // 박스가 본문 바닥과 붙어 보이는 문제(Task #445) 발생.
+                        let line_anchor_offset = if matches!(t.common.text_wrap, crate::model::shape::TextWrap::TopAndBottom)
+                            && matches!(t.common.vert_rel_to, crate::model::shape::VertRelTo::Para)
+                            && i == 0
+                        {
+                            let lh_hu = para.line_segs.first().map(|ls| ls.line_height as i32).unwrap_or(0);
+                            hwpunit_to_px(lh_hu, self.dpi) / 2.0
+                        } else {
+                            0.0
+                        };
+                        let table_y = y_offset + line_anchor_offset;
                         y_offset = self.layout_table(
                             tree, area_node, t,
-                            0, styles, area, y_offset, bin_data_content,
+                            0, styles, area, table_y, bin_data_content,
                             None, 0,
                             Some((i, ci)), alignment,
                             None, 0.0, 0.0, None, None, None,
@@ -1633,6 +1647,18 @@ impl LayoutEngine {
                     }
                     groups.push((bf_id, x, y_start, w, y_end, top_inset, bottom_inset, is_partial_start, is_partial_end));
                 }
+
+                // Task #445: paragraph border 가 col_area 바닥을 넘지 않도록 클램프.
+                // vpos-reset 미지원으로 paragraph 가 col_bottom 너머에 layout 될 수 있는데,
+                // border 까지 따라가면 페이지/꼬리말 영역까지 침범 (예: exam_kor p8 의 1671px).
+                // 텍스트 자체의 overflow 처리는 별도 이슈.
+                let col_top = col_area.y;
+                let col_bot = col_area.y + col_area.height;
+                for g in groups.iter_mut() {
+                    if g.2 < col_top { g.2 = col_top; }
+                    if g.4 > col_bot { g.4 = col_bot; }
+                }
+                groups.retain(|g| g.4 > g.2);
 
                 let groups_len = groups.len();
                 for (gi, (bf_id, x, y_start, w, y_end, top_inset, bottom_inset, is_partial_start, is_partial_end)) in groups.clone().into_iter().enumerate() {
