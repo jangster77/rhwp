@@ -1735,6 +1735,17 @@ impl LayoutEngine {
                                     let bin_data_id = pic.image_attr.bin_data_id;
                                     let image_data = find_bin_data(bdc, bin_data_id)
                                         .map(|c| c.data.clone());
+                                    let crop = {
+                                        let c = &pic.crop;
+                                        if c.right > c.left && c.bottom > c.top
+                                            && (c.left != 0 || c.top != 0 || c.right != 0 || c.bottom != 0) {
+                                            Some((c.left, c.top, c.right, c.bottom))
+                                        } else { None }
+                                    };
+                                    let original_size_hu = if pic.shape_attr.original_width > 0
+                                        && pic.shape_attr.original_height > 0 {
+                                        Some((pic.shape_attr.original_width, pic.shape_attr.original_height))
+                                    } else { None };
                                     let img_id = tree.next_id();
                                     let img_node = RenderNode::new(
                                         img_id,
@@ -1742,6 +1753,8 @@ impl LayoutEngine {
                                             section_index: Some(section_index),
                                             para_index: Some(para_index),
                                             control_index: Some(tac_ci),
+                                            crop,
+                                            original_size_hu,
                                             effect: pic.image_attr.effect,
                                             brightness: pic.image_attr.brightness,
                                             contrast: pic.image_attr.contrast,
@@ -1995,6 +2008,17 @@ impl LayoutEngine {
                                 let bin_data_id = pic.image_attr.bin_data_id;
                                 let image_data = find_bin_data(bdc, bin_data_id)
                                     .map(|c| c.data.clone());
+                                let crop = {
+                                    let c = &pic.crop;
+                                    if c.right > c.left && c.bottom > c.top
+                                        && (c.left != 0 || c.top != 0 || c.right != 0 || c.bottom != 0) {
+                                        Some((c.left, c.top, c.right, c.bottom))
+                                    } else { None }
+                                };
+                                let original_size_hu = if pic.shape_attr.original_width > 0
+                                    && pic.shape_attr.original_height > 0 {
+                                    Some((pic.shape_attr.original_width, pic.shape_attr.original_height))
+                                } else { None };
                                 let img_id = tree.next_id();
                                 let img_node = RenderNode::new(
                                     img_id,
@@ -2002,6 +2026,8 @@ impl LayoutEngine {
                                         section_index: Some(section_index),
                                         para_index: Some(para_index),
                                         control_index: Some(tac_ci),
+                                        crop,
+                                        original_size_hu,
                                         effect: pic.image_attr.effect,
                                         brightness: pic.image_attr.brightness,
                                         contrast: pic.image_attr.contrast,
@@ -2080,6 +2106,17 @@ impl LayoutEngine {
                                     let bin_data_id = pic.image_attr.bin_data_id;
                                     let image_data = find_bin_data(bdc, bin_data_id)
                                         .map(|c| c.data.clone());
+                                    let crop = {
+                                        let c = &pic.crop;
+                                        if c.right > c.left && c.bottom > c.top
+                                            && (c.left != 0 || c.top != 0 || c.right != 0 || c.bottom != 0) {
+                                            Some((c.left, c.top, c.right, c.bottom))
+                                        } else { None }
+                                    };
+                                    let original_size_hu = if pic.shape_attr.original_width > 0
+                                        && pic.shape_attr.original_height > 0 {
+                                        Some((pic.shape_attr.original_width, pic.shape_attr.original_height))
+                                    } else { None };
                                     let img_id = tree.next_id();
                                     let img_node = RenderNode::new(
                                         img_id,
@@ -2087,6 +2124,8 @@ impl LayoutEngine {
                                             section_index: Some(section_index),
                                             para_index: Some(para_index),
                                             control_index: Some(tac_ci),
+                                            crop,
+                                            original_size_hu,
                                             effect: pic.image_attr.effect,
                                             brightness: pic.image_attr.brightness,
                                             contrast: pic.image_attr.contrast,
@@ -2512,8 +2551,11 @@ impl LayoutEngine {
         }
 
         // 문단 테두리/배경 범위 수집 (build_single_column에서 연속 그룹으로 병합 렌더링)
-        // margin_left/margin_right를 반영하여 박스 위치·폭 조정
-        if para_border_fill_id > 0 {
+        // margin_left/margin_right를 반영하여 박스 위치·폭 조정.
+        // Task #463: 셀 안 단락은 본문 큐에 leakage 하지 않도록 cell_ctx 게이팅.
+        // 셀 외곽선은 별도 경로(table_layout/border_rendering)에서 처리되므로
+        // 본문 단락의 연속 외곽선 merge 가 셀 단락 좌표/시그니처에 의해 깨지지 않게 한다.
+        if para_border_fill_id > 0 && cell_ctx.is_none() {
             let bg_height = y - bg_y_start;
             if bg_height > 0.0 {
                 // margin_left/margin_right는 이미 px 단위 (style_resolver에서 변환됨)
@@ -2523,8 +2565,19 @@ impl LayoutEngine {
                 // 컬럼/페이지 wrap 시 inner edge 미렌더링용 partial 플래그
                 let is_partial_start = start_line > 0;
                 let is_partial_end = end < composed.lines.len();
+                // Task #463: wrap=Square 호스트 문단의 텍스트는 좁은 wrap_area 에서
+                // 렌더링되지만 외곽선은 원래 col_area 너비로 그려야 floating 표를
+                // 박스가 둘러쌈. layout_wrap_around_paras 가 override 를 설정.
+                // override 가 활성된 경우(wrap host), 박스 우측은 floating 표의 끝
+                // 까지 확장된 width 그대로 사용 — margin_right 차감하지 않는다
+                // (그렇지 않으면 표가 박스 밖으로 다시 튀어나옴).
+                let (box_x, box_w) = if let Some((ox, ow)) = self.border_box_override.get() {
+                    (ox + box_margin_left, ow - box_margin_left)
+                } else {
+                    (col_area.x + box_margin_left, col_area.width - box_margin_left - box_margin_right)
+                };
                 self.para_border_ranges.borrow_mut().push(
-                    (para_border_fill_id, col_area.x + box_margin_left, bg_y_start, col_area.width - box_margin_left - box_margin_right, y, top_inset, bottom_inset, is_partial_start, is_partial_end)
+                    (para_border_fill_id, box_x, bg_y_start, box_w, y, top_inset, bottom_inset, is_partial_start, is_partial_end, para_index)
                 );
             }
         }
