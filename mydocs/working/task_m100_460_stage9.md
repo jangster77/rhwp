@@ -97,8 +97,28 @@ table.common.attr = build_common_obj_attr(&table.common);
 | 잔존 `LAYOUT_OVERFLOW_DRAW` 경고 | 꼬리말 36px 초과 — 기존 잔존 경고만 |
 | 렌더러 수정 | **없음** (hwp3/ 디렉토리만) |
 
+### 4. serialize_table() 폴백 수정 (serializer/control.rs)
+
+```rust
+// 수정 전: raw_ctrl_data가 없으면 &[] (빈 CTRL_HEADER)
+if !table.raw_ctrl_data.is_empty() { &table.raw_ctrl_data } else { &[] }
+
+// 수정 후: raw_ctrl_data가 없으면 common에서 재구성
+let ctrl_data = if !table.raw_ctrl_data.is_empty() {
+    table.raw_ctrl_data.clone()
+} else {
+    serialize_common_obj_attr(&table.common)
+};
+```
+
+HWP3 파서는 테이블의 `raw_ctrl_data`를 설정하지 않는다.
+직렬화 시 `&[]`가 CTRL_HEADER로 기록되어 재열기 시 `attr=0`이 되어
+`treat_as_char=false`로 복원되던 문제를 `serialize_common_obj_attr`로 폴백하여 해소.
+`table.common.attr`(이미 Stage 9에서 설정)이 이제 실제로 직렬화에 반영된다.
+
 ## 수정 파일
 
 | 파일 | 변경 내용 |
 |------|---------|
 | `src/parser/hwp3/mod.rs` | `build_common_obj_attr()` 함수 추가 + 그림/표 파싱 후 attr 갱신 |
+| `src/serializer/control.rs` | `serialize_table()` — `raw_ctrl_data` 없을 때 `serialize_common_obj_attr` 폴백 |
