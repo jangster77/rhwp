@@ -202,6 +202,27 @@ impl Paginator {
                 para_height
             };
 
+            // 비-TAC TopAndBottom Para-relative 그림: 높이를 fit 판단에 포함
+            // 문단 텍스트만으로는 들어가지만 그림이 넘치는 경우, 그림도 다음 페이지로
+            let para_height_for_fit = {
+                let non_tac_pic_h: f64 = para.controls.iter()
+                    .filter_map(|c| {
+                        if let Control::Picture(pic) = c {
+                            if !pic.common.treat_as_char
+                                && matches!(pic.common.text_wrap, crate::model::shape::TextWrap::TopAndBottom)
+                                && matches!(pic.common.vert_rel_to, crate::model::shape::VertRelTo::Para)
+                            {
+                                let pic_h = crate::renderer::hwpunit_to_px(pic.common.height as i32, self.dpi);
+                                let mt = crate::renderer::hwpunit_to_px(pic.common.margin.top as i32, self.dpi);
+                                let mb = crate::renderer::hwpunit_to_px(pic.common.margin.bottom as i32, self.dpi);
+                                Some(pic_h + mt + mb)
+                            } else { None }
+                        } else { None }
+                    })
+                    .sum();
+                para_height_for_fit + non_tac_pic_h
+            };
+
             // 현재 페이지에 넣을 수 있는지 확인 (표 문단만 플러시)
             // 다중 TAC 표 문단은 개별 표가 paginate_table_control에서 처리되므로 스킵
             let tac_table_count_for_flush = para.controls.iter()
@@ -321,6 +342,30 @@ impl Paginator {
 
             // 비-표 문단 처리
             if !has_table {
+                // 비-TAC TopAndBottom Para-relative 그림이 있고
+                // 문단+그림 합산 높이가 현재 페이지를 초과하면 먼저 쪽 나눔
+                // (그림 anchor 문단과 그림을 같은 페이지에 배치 — HWP 뷰어 동작 일치)
+                let non_tac_pic_h_for_break: f64 = para.controls.iter()
+                    .filter_map(|c| {
+                        if let Control::Picture(pic) = c {
+                            if !pic.common.treat_as_char
+                                && matches!(pic.common.text_wrap, crate::model::shape::TextWrap::TopAndBottom)
+                                && matches!(pic.common.vert_rel_to, crate::model::shape::VertRelTo::Para)
+                            {
+                                let pic_h = crate::renderer::hwpunit_to_px(pic.common.height as i32, self.dpi);
+                                let mt = crate::renderer::hwpunit_to_px(pic.common.margin.top as i32, self.dpi);
+                                let mb = crate::renderer::hwpunit_to_px(pic.common.margin.bottom as i32, self.dpi);
+                                Some(pic_h + mt + mb)
+                            } else { None }
+                        } else { None }
+                    })
+                    .sum();
+                if non_tac_pic_h_for_break > 0.0
+                    && !st.current_items.is_empty()
+                    && st.current_height + para_height + non_tac_pic_h_for_break > st.available_height() + 0.5
+                {
+                    st.advance_column_or_new_page();
+                }
                 self.paginate_text_lines(
                     &mut st, para_idx, para, measured, para_height,
                     base_available_height, respect_vpos_reset,

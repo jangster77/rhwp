@@ -569,6 +569,33 @@ impl TypesetEngine {
             }
 
             if !has_table {
+                // 비-TAC TopAndBottom VertRelTo::Para 그림이 있을 때:
+                // 텍스트 줄(para_h) + 그림 높이를 합산하여 현재 페이지를 초과하면
+                // 먼저 쪽 나눔 → anchor 문단과 그림을 같은 페이지에 배치 (HWP 뷰어 동작 일치)
+                {
+                    use crate::model::shape::{TextWrap, VertRelTo};
+                    let non_tac_para_pic_h: f64 = para.controls.iter().filter_map(|c| {
+                        if let Control::Picture(pic) = c {
+                            if !pic.common.treat_as_char
+                                && matches!(pic.common.text_wrap, TextWrap::TopAndBottom)
+                                && matches!(pic.common.vert_rel_to, VertRelTo::Para)
+                            {
+                                let h = hwpunit_to_px(pic.common.height as i32, self.dpi);
+                                let mt = hwpunit_to_px(pic.common.margin.top as i32, self.dpi);
+                                let mb = hwpunit_to_px(pic.common.margin.bottom as i32, self.dpi);
+                                Some(h + mt + mb)
+                            } else { None }
+                        } else { None }
+                    }).sum();
+                    if non_tac_para_pic_h > 0.0 && !st.current_items.is_empty() {
+                        let para_h_px: f64 = para.line_segs.iter()
+                            .map(|s| hwpunit_to_px(s.line_height + s.line_spacing, self.dpi))
+                            .sum();
+                        if st.current_height + para_h_px + non_tac_para_pic_h > st.available_height() + 0.5 {
+                            st.advance_column_or_new_page();
+                        }
+                    }
+                }
                 // --- 핵심: format → fits → place/split ---
                 let formatted = self.format_paragraph(para, composed.get(para_idx), styles);
                 self.typeset_paragraph(&mut st, para_idx, para, &formatted);
