@@ -1257,6 +1257,9 @@ pub(crate) fn parse_paragraph_list(
             para.line_segs = line_segs;
         }
 
+        // HWP3 혼합 단락: Para-relative TopAndBottom 그림 구역 내 줄을 그림 하단 아래로 재배치
+        fixup_hwp3_mixed_para_line_segs(&mut para);
+
         // HWP3 후처리: tac=false(부동) + 자리차지(TopAndBottom) 그림의
         // caption.width=0 보정 (layout_body_picture 캡션 렌더링에 그림 너비 사용).
         // paginator는 Control::Picture 처리 시 pic_h를 current_height에 추가하므로
@@ -1555,6 +1558,75 @@ pub fn parse_hwp3(data: &[u8]) -> Result<Document, Hwp3Error> {
     doc.bin_data_content = doc_bin_data_content;
 
     Ok(doc)
+}
+
+/// HWP3 혼합 단락(텍스트 + Para-relative TopAndBottom 비-TAC 그림)에서
+/// 그림 구역에 겹치는 LINE_SEG를 그림 하단 아래로 재배치한다.
+///
+/// 마지막 "그림 위쪽" LINE_SEG의 line_height를 그림 하단까지의 거리로 확장하면
+/// compose_paragraph → 렌더러의 순차 y+=line_height가 그림 구역을 자동 점프한다.
+fn fixup_hwp3_mixed_para_line_segs(para: &mut crate::model::paragraph::Paragraph) {
+    use crate::model::control::Control;
+    use crate::model::shape::{TextWrap, VertRelTo};
+
+    let Some((fig_top_hu, fig_bottom_hu)) = para.controls.iter().find_map(|c| {
+        if let Control::Picture(p) = c {
+            if !p.common.treat_as_char
+                && p.common.text_wrap == TextWrap::TopAndBottom
+                && p.common.vert_rel_to == VertRelTo::Para
+                && p.common.height > 0
+            {
+                Some((
+                    p.common.vertical_offset as i32,
+                    p.common.vertical_offset as i32 + p.common.height as i32,
+                ))
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }) else {
+        return;
+    };
+
+    if para.line_segs.len() <= 1 {
+        return;
+    }
+
+    // LINE_SEG 누적 위치 계산 (document.rs advance 공식과 동일)
+    let mut pos: i32 = 0;
+    let mut split_idx: Option<usize> = None;
+    for (i, seg) in para.line_segs.iter().enumerate() {
+        let advance = if seg.text_height > 0
+            && (seg.text_height as i32) < (seg.line_height as i32)
+        {
+            seg.text_height as i32 + seg.line_spacing as i32
+        } else {
+            seg.line_height as i32 + seg.line_spacing as i32
+        };
+        if pos < fig_top_hu && pos + advance > fig_top_hu {
+            split_idx = Some(i);
+            break;
+        }
+        pos += advance;
+    }
+
+    let Some(idx) = split_idx else {
+        return;
+    };
+
+    let gap = fig_bottom_hu - pos;
+    if gap <= 0 {
+        return;
+    }
+
+    // 마지막 그림-위쪽 LINE_SEG: line_height를 그림 하단까지 확장
+    // text_height=0으로 설정해 advance=lh+ls 공식을 보장
+    let seg = &mut para.line_segs[idx];
+    seg.line_height = gap;
+    seg.text_height = 0;
+    seg.line_spacing = 0;
 }
 
 #[cfg(test)]
