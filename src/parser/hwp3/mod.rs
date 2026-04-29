@@ -499,6 +499,9 @@ pub(crate) fn parse_paragraph_list(
                                     table.common.vertical_offset = (vert_align as i32 * 4) as u32;
                                 }
                                 table.common.attr = build_common_obj_attr(&table.common);
+                                // typeset.rs는 table.attr(=common.attr)로 is_tac/text_wrap을 판정한다.
+                                // HWP5 파서도 table.attr = table.common.attr 로 동기화하므로 동일하게 설정한다.
+                                table.attr = table.common.attr;
 
                                 let cell_padding_left = (&info_buf[34..36]).read_i16::<LittleEndian>().unwrap_or(0) as u32 * 4;
                                 let cell_padding_right = (&info_buf[36..38]).read_i16::<LittleEndian>().unwrap_or(0) as u32 * 4;
