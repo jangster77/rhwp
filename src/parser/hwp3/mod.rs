@@ -1141,7 +1141,13 @@ pub(crate) fn parse_paragraph_list(
         };
         fallback_line_height = fallback_line_height.max(100); // 0 방지
         let fallback_baseline_distance = (fallback_text_height as f32 * 0.85) as i32;
-        let fallback_line_spacing = fallback_line_height - fallback_text_height;
+        // HWP5 IR 모델: percent 줄간격은 line_height에 이미 반영 → line_spacing=0
+        // fixed 줄간격은 line_height=fixed, line_spacing=fixed-th (추가 간격)
+        let fallback_line_spacing = if fixed_line_spacing.is_some() {
+            fallback_line_height - fallback_text_height
+        } else {
+            0
+        };
 
         let mut line_segs = Vec::with_capacity(line_infos.len().max(1));
         if line_infos.is_empty() {
@@ -1181,7 +1187,7 @@ pub(crate) fn parse_paragraph_list(
                         th * line_spacing_ratio / 100
                     };
                     bl = (th as f32 * 0.85) as i32;
-                    ls = lh - th;
+                    ls = if fixed_line_spacing.is_some() { lh - th } else { 0 };
                 }
 
                 let mut tag = 0x00060000;
