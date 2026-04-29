@@ -609,7 +609,7 @@ pub(crate) fn parse_paragraph_list(
                                     }
 
                                     doc_border_fills.push(border_fill);
-                                    cell.border_fill_id = (doc_border_fills.len() - 1) as u16;
+                                    cell.border_fill_id = doc_border_fills.len() as u16; // 1-based (렌더러 규칙)
 
                                     // 중복된 스팬 계산 제거됨
                                     
@@ -955,7 +955,7 @@ pub(crate) fn parse_paragraph_list(
                                         tb.margin_bottom = cell.padding.bottom as _;
                                         tb.vertical_align = cell.vertical_align;
                                         
-                                        if let Some(bf) = doc_border_fills.get(cell.border_fill_id as usize) {
+                                        if let Some(bf) = doc_border_fills.get(cell.border_fill_id.saturating_sub(1) as usize) {
                                             rect.drawing.border_line = crate::model::style::ShapeBorderLine {
                                                 width: bf.borders[0].width as i32,
                                                 color: bf.borders[0].color,
@@ -983,7 +983,7 @@ pub(crate) fn parse_paragraph_list(
                                         }
                                         form.caption = text.trim().to_string();
                                         form.name = form.caption.clone();
-                                        if let Some(bf) = doc_border_fills.get(cell.border_fill_id as usize) {
+                                        if let Some(bf) = doc_border_fills.get(cell.border_fill_id.saturating_sub(1) as usize) {
                                             if let Some(ref solid) = bf.fill.solid {
                                                 form.back_color = solid.background_color;
                                             }
@@ -1341,8 +1341,22 @@ pub fn parse_hwp3(data: &[u8]) -> Result<Document, Hwp3Error> {
 
     // 기본 Document 껍데기를 생성한다.
     let mut doc = Document::default();
-    // HWP3 문서임을 표시 (자동번호 카운팅 방식이 HWP5와 다름)
+    // version.major=3: assign_auto_numbers()가 HWP3 문단 카운팅 방식을 사용하도록 표시.
+    // 직렬화(serialize_file_header)는 raw_data가 Some이면 개별 필드 대신 raw_data를 사용.
+    // → raw_data에 HWP5 헤더를 설정하면 저장 시 올바른 HWP5 CFB 파일이 생성된다.
     doc.header.version.major = 3;
+    {
+        use crate::parser::header::{FILE_HEADER_SIZE, HWP_SIGNATURE};
+        let mut hwp5_hdr = vec![0u8; FILE_HEADER_SIZE];
+        hwp5_hdr[..HWP_SIGNATURE.len()].copy_from_slice(HWP_SIGNATURE);
+        // 버전 5.0.3.0 (major=5, minor=0, build=3, revision=0) — HWP5 일반 호환 버전
+        hwp5_hdr[35] = 5; // major
+        hwp5_hdr[34] = 0; // minor
+        hwp5_hdr[33] = 3; // build
+        hwp5_hdr[32] = 0; // revision
+        // flags = 0: 비압축, 비암호, 비배포
+        doc.header.raw_data = Some(hwp5_hdr);
+    }
 
     let mut cursor = Cursor::new(&data[30..]); // 파일 인식 정보(30 바이트) 건너뜀
 
