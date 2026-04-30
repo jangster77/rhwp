@@ -1018,9 +1018,6 @@ impl Paginator {
                         control_index: ctrl_idx,
                     });
                     // 비-TAC 그림: 본문 공간을 차지하는 배치이면 높이 추가 (Task #10)
-                    // Para-relative TopAndBottom 그림은 렌더러에서 텍스트 렌더링 후(y_offset)에
-                    // 배치되므로 vert_offset은 이미 FullParagraph 높이에 포함된다.
-                    // 따라서 pic_h만 추가한다.
                     if !pic.common.treat_as_char
                         && matches!(pic.common.text_wrap,
                             crate::model::shape::TextWrap::Square

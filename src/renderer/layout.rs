@@ -476,8 +476,6 @@ impl LayoutEngine {
             for child in &body_node.children {
                 expand_clip(&mut clip, child);
             }
-            // 부동 개체(그림 등)가 body_area 아래로 크게 넘치더라도 clip을 꼬리말 영역까지
-            // 확장하지 않는다. 표 외곽 테두리 등 소폭 확장(10px)은 허용한다.
             let body_bottom = body_bbox.y + body_bbox.height;
             let max_bottom = body_bottom + 10.0;
             if clip.y + clip.height > max_bottom {
