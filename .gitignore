@@ -67,6 +67,9 @@ README.public.md
 # 한컴 도움말 (저작권 보호)
 mydocs/manual/hwp/Help/
 
+# 로컬 비교 메모 (커밋 제외)
+mydocs/tech/libre비교.md
+
 # rhwp-vscode 빌드 산출물
 rhwp-vscode/media/rhwp.js
 rhwp-vscode/media/rhwp_bg.wasm
