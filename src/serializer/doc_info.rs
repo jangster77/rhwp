@@ -10,7 +10,7 @@
 use super::byte_writer::ByteWriter;
 use super::record_writer::write_record;
 
-use crate::model::bin_data::{BinData, BinDataType};
+use crate::model::bin_data::{BinData, BinDataCompression, BinDataType};
 use crate::model::document::{DocInfo, DocProperties};
 use crate::model::style::{
     BorderFill, BorderLineType, Bullet, CharShape, FillType, Font, ImageFillMode, Numbering,
@@ -175,7 +175,20 @@ pub fn serialize_id_mappings(doc_info: &DocInfo) -> Vec<u8> {
 
 pub fn serialize_bin_data(bin_data: &BinData) -> Vec<u8> {
     let mut w = ByteWriter::new();
-    w.write_u16(bin_data.attr).unwrap();
+    // attr bits 0-3: data_type, bits 4-5: compression.
+    // bin_data.attr가 0(HWP3/HWPX 출처)이면 data_type/compression 필드로 재구성한다.
+    let type_bits: u16 = match bin_data.data_type {
+        BinDataType::Link => 0,
+        BinDataType::Embedding => 1,
+        BinDataType::Storage => 2,
+    };
+    let compress_bits: u16 = match bin_data.compression {
+        BinDataCompression::Default => 0,
+        BinDataCompression::Compress => 1,
+        BinDataCompression::NoCompress => 2,
+    };
+    let attr = (bin_data.attr & 0xFF00) | type_bits | (compress_bits << 4);
+    w.write_u16(attr).unwrap();
 
     match bin_data.data_type {
         BinDataType::Link => {

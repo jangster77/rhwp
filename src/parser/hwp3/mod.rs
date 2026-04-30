@@ -1719,5 +1719,18 @@ mod tests {
         // 재로드 성공 + 내용 있음
         let reloaded = DocumentCore::from_bytes(&hwp5_bytes).expect("HWP5 reload failed");
         assert!(reloaded.page_count() > 0, "reloaded document must have pages");
+
+        // BinData 보존 확인: 저장된 HWP5에 BIN*.* 스트림이 존재하는지 확인
+        // serialize_bin_data의 attr=0 버그가 있으면 BIN*.* 스트림이 누락되어 이미지가 사라진다.
+        {
+            use crate::parser::cfb_reader::CfbReader;
+            let cfb = CfbReader::open(&hwp5_bytes).expect("CFB open failed");
+            let bin_streams: Vec<_> = cfb.list_streams()
+                .into_iter()
+                .filter(|n| n.contains("BIN"))
+                .collect();
+            assert!(!bin_streams.is_empty(),
+                "saved HWP5 must have BinData/BIN* streams, got none (images lost)");
+        }
     }
 }
