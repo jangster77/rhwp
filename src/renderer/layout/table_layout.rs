@@ -264,6 +264,7 @@ impl LayoutEngine {
                 self.render_cell_background(
                     tree, &mut table_node, Some(tbl_bs),
                     table_x, table_y, table_width, table_height,
+                    bin_data_content,
                 );
             }
         }
@@ -297,23 +298,9 @@ impl LayoutEngine {
                     });
                     let zone_w = (zone_x_end - zone_x).max(0.0);
                     let zone_h = (zone_y_end - zone_y).max(0.0);
-                    // 단색/패턴/그라데이션 배경
-                    self.render_cell_background(tree, &mut table_node, Some(zone_bs), zone_x, zone_y, zone_w, zone_h);
-                    // 이미지 채우기
-                    if let Some(ref img_fill) = zone_bs.image_fill {
-                        if let Some(img_content) = crate::renderer::layout::find_bin_data(bin_data_content, img_fill.bin_data_id) {
-                            let img_id = tree.next_id();
-                            let img_node = RenderNode::new(
-                                img_id,
-                                RenderNodeType::Image(ImageNode {
-                                    fill_mode: Some(img_fill.fill_mode),
-                                    ..ImageNode::new(img_fill.bin_data_id, Some(img_content.data.clone()))
-                                }),
-                                BoundingBox::new(zone_x, zone_y, zone_w, zone_h),
-                            );
-                            table_node.children.push(img_node);
-                        }
-                    }
+                    // [Task #429] 단색/패턴/그라데이션 + 이미지 채우기 (zone 의 별도 image fill 처리는
+                    // render_cell_background 가 통합 처리하므로 제거)
+                    self.render_cell_background(tree, &mut table_node, Some(zone_bs), zone_x, zone_y, zone_w, zone_h, bin_data_content);
                 }
             }
         }
@@ -877,6 +864,7 @@ impl LayoutEngine {
         cell_node: &mut RenderNode,
         border_style: Option<&crate::renderer::style_resolver::ResolvedBorderStyle>,
         cell_x: f64, cell_y: f64, cell_w: f64, cell_h: f64,
+        bin_data_content: &[BinDataContent],
     ) {
         let fill_color = border_style.and_then(|bs| bs.fill_color);
         let pattern = border_style.and_then(|bs| bs.pattern);
@@ -899,6 +887,21 @@ impl LayoutEngine {
                 BoundingBox::new(cell_x, cell_y, cell_w, cell_h),
             );
             cell_node.children.push(rect_node);
+        }
+        // [Task #429] image fill 처리 — zone 처리와 동일 패턴
+        if let Some(img_fill) = border_style.and_then(|bs| bs.image_fill.as_ref()) {
+            if let Some(img_content) = crate::renderer::layout::find_bin_data(bin_data_content, img_fill.bin_data_id) {
+                let img_id = tree.next_id();
+                let img_node = RenderNode::new(
+                    img_id,
+                    RenderNodeType::Image(ImageNode {
+                        fill_mode: Some(img_fill.fill_mode),
+                        ..ImageNode::new(img_fill.bin_data_id, Some(img_content.data.clone()))
+                    }),
+                    BoundingBox::new(cell_x, cell_y, cell_w, cell_h),
+                );
+                cell_node.children.push(img_node);
+            }
         }
     }
 
@@ -1151,7 +1154,7 @@ impl LayoutEngine {
             };
 
             // (a) 셀 배경
-            self.render_cell_background(tree, &mut cell_node, border_style, cell_x, cell_y, cell_w, cell_h);
+            self.render_cell_background(tree, &mut cell_node, border_style, cell_x, cell_y, cell_w, cell_h, bin_data_content);
 
             // 셀 패딩 (cell.padding이 0이면 table.padding fallback)
             let (mut pad_left, mut pad_right, pad_top, pad_bottom) = self.resolve_cell_padding(cell, table);
