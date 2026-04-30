@@ -171,6 +171,8 @@ pub(crate) fn parse_paragraph_list(
     doc_para_shapes: &mut Vec<crate::model::style::ParaShape>,
     doc_border_fills: &mut Vec<crate::model::style::BorderFill>,
     pic_name_to_id: &mut std::collections::HashMap<String, u16>,
+    body_left_hu: i32,
+    column_width_hu: i32,
 ) -> Result<Vec<crate::model::paragraph::Paragraph>, Hwp3Error> {
     use crate::model::paragraph::{Paragraph, LineSeg, CharShapeRef};
     use byteorder::{LittleEndian, ReadBytesExt};
@@ -707,14 +709,14 @@ pub(crate) fn parse_paragraph_list(
 
                                     // 중복된 스팬 계산 제거됨
                                     
-                                    let nested = parse_paragraph_list(body_cursor, doc_char_shapes, doc_para_shapes, doc_border_fills, pic_name_to_id)?;
+                                    let nested = parse_paragraph_list(body_cursor, doc_char_shapes, doc_para_shapes, doc_border_fills, pic_name_to_id, body_left_hu, column_width_hu)?;
                                     cell.paragraphs = nested;
                                     cells.push(cell);
                                 }
                                 table.cells = cells;
                                 table.rebuild_grid();
                                 table.row_sizes = (0..table.row_count).map(|r| table.cells.iter().filter(|c| c.row == r).count() as i16).collect();
-                                let caption_paras = parse_paragraph_list(body_cursor, doc_char_shapes, doc_para_shapes, doc_border_fills, pic_name_to_id)?;
+                                let caption_paras = parse_paragraph_list(body_cursor, doc_char_shapes, doc_para_shapes, doc_border_fills, pic_name_to_id, body_left_hu, column_width_hu)?;
                                 let caption_direction = match caption_pos {
                                     0 => crate::model::shape::CaptionDirection::Bottom,
                                     1 => crate::model::shape::CaptionDirection::Top,
@@ -861,7 +863,7 @@ pub(crate) fn parse_paragraph_list(
                             
                             let caption_pos = (&info_buf[70..72]).read_u16::<LittleEndian>().unwrap_or(0);
                             let caption_width = (&info_buf[46..48]).read_u16::<LittleEndian>().unwrap_or(0) as u32 * 4;
-                            let caption_paras = parse_paragraph_list(body_cursor, doc_char_shapes, doc_para_shapes, doc_border_fills, pic_name_to_id)?;
+                            let caption_paras = parse_paragraph_list(body_cursor, doc_char_shapes, doc_para_shapes, doc_border_fills, pic_name_to_id, body_left_hu, column_width_hu)?;
                             let caption_direction = match caption_pos {
                                 0 => crate::model::shape::CaptionDirection::Bottom,
                                 1 => crate::model::shape::CaptionDirection::Top,
@@ -992,15 +994,15 @@ pub(crate) fn parse_paragraph_list(
                         } else if ch == 15 { // 숨은 설명
                             info_buf.resize(8, 0);
                             if let Err(_) = body_cursor.read_exact(&mut info_buf) { break; }
-                            nested_paragraphs = parse_paragraph_list(body_cursor, doc_char_shapes, doc_para_shapes, doc_border_fills, pic_name_to_id)?;
+                            nested_paragraphs = parse_paragraph_list(body_cursor, doc_char_shapes, doc_para_shapes, doc_border_fills, pic_name_to_id, body_left_hu, column_width_hu)?;
                         } else if ch == 16 { // 머리말/꼬리말
                             info_buf.resize(10, 0);
                             if let Err(_) = body_cursor.read_exact(&mut info_buf) { break; }
-                            nested_paragraphs = parse_paragraph_list(body_cursor, doc_char_shapes, doc_para_shapes, doc_border_fills, pic_name_to_id)?;
+                            nested_paragraphs = parse_paragraph_list(body_cursor, doc_char_shapes, doc_para_shapes, doc_border_fills, pic_name_to_id, body_left_hu, column_width_hu)?;
                         } else if ch == 17 { // 각주/미주
                             info_buf.resize(14, 0);
                             if let Err(_) = body_cursor.read_exact(&mut info_buf) { break; }
-                            nested_paragraphs = parse_paragraph_list(body_cursor, doc_char_shapes, doc_para_shapes, doc_border_fills, pic_name_to_id)?;
+                            nested_paragraphs = parse_paragraph_list(body_cursor, doc_char_shapes, doc_para_shapes, doc_border_fills, pic_name_to_id, body_left_hu, column_width_hu)?;
                         } else if ch == 29 { // 상호 참조
                             if header_val1 < 1000000 {
                                 info_buf.resize(header_val1 as usize, 0);
@@ -1259,18 +1261,54 @@ pub(crate) fn parse_paragraph_list(
         let last_pgy_here = line_infos.last().map(|l| l.pgy).unwrap_or(first_pgy_here);
 
         // 이 문단에 Square wrap 그림이 있으면 구역 좌표(pgy_start, pgy_end) 계산.
-        // column_start=0, segment_width=그림 좌측 경계(=텍스트 구역 우측 경계, HWPUNIT).
+        // horizontal_offset은 용지(paper) 기준 절대 좌표(HU).
+        // column-relative로 변환하여 그림이 왼쪽이면 텍스트가 오른쪽에, 오른쪽이면 왼쪽에 흐르게 함.
         let pic_wrap_zone: Option<(i32, i32, u16, u16)> = para.controls.iter().find_map(|c| {
             if let crate::model::control::Control::Picture(pic) = c {
                 if !pic.common.treat_as_char
                     && matches!(pic.common.text_wrap, crate::model::shape::TextWrap::Square)
                     && pic.common.horizontal_offset > 0
                 {
+                    use crate::model::shape::HorzRelTo;
+                    let h_off = pic.common.horizontal_offset as i32;
+                    let pic_w = pic.common.width as i32;
+
+                    // 용지 기준 오프셋을 컬럼 기준으로 변환
+                    let pic_left_col = match pic.common.horz_rel_to {
+                        HorzRelTo::Paper => h_off - body_left_hu,
+                        _ => h_off, // Para/Page: 이미 컬럼 기준으로 간주
+                    };
+                    let pic_right_col = pic_left_col + pic_w;
+
+                    // 그림이 컬럼 영역을 완전히 벗어나면 무시
+                    if pic_right_col <= 0 || pic_left_col >= column_width_hu {
+                        return None;
+                    }
+
+                    // 그림 위치에 따라 텍스트 흐름 방향 결정
+                    let (cs, sw) = if pic_left_col < column_width_hu / 2 {
+                        // 왼쪽 배치: 텍스트가 오른쪽으로 흐름
+                        let cs = pic_right_col.max(0);
+                        let sw = (column_width_hu - cs).max(0);
+                        (cs, sw)
+                    } else {
+                        // 오른쪽 배치: 텍스트가 왼쪽으로 흐름
+                        let sw = pic_left_col.min(column_width_hu).max(0);
+                        (0i32, sw)
+                    };
+
+                    if sw <= 0 { return None; }
+
                     let v_off_hunit = (pic.common.vertical_offset / 4) as u16;
                     let h_hunit = (pic.common.height / 4) as u16;
-                    let pgy_start = first_pgy_here.saturating_add(v_off_hunit);
+                    // Para-relative: v_off는 문단 기준 상대 좌표 → first_pgy_here에 더함
+                    // Paper/Page-relative: v_off는 용지 기준 절대 좌표 → pgy와 직접 비교
+                    let pgy_start = match pic.common.vert_rel_to {
+                        crate::model::shape::VertRelTo::Para => first_pgy_here.saturating_add(v_off_hunit),
+                        _ => v_off_hunit,
+                    };
                     let pgy_end = pgy_start.saturating_add(h_hunit);
-                    Some((0i32, pic.common.horizontal_offset as i32, pgy_start, pgy_end))
+                    Some((cs, sw, pgy_start, pgy_end))
                 } else {
                     None
                 }
@@ -1358,8 +1396,10 @@ pub(crate) fn parse_paragraph_list(
                 }
 
                 // 이 줄의 pgy로 어울림 구역 판정 (per-line)
+                // 앵커 문단(pic_wrap_zone.is_some()): 자신이 그림 호스트이므로 pgy 무관하게 적용.
+                // 후속 문단: pgy가 구역 안에 있을 때만 적용.
                 let line_cs_sw = current_zone.and_then(|(cs, sw, pgy_start, pgy_end)| {
-                    if linfo.pgy >= pgy_start && linfo.pgy < pgy_end {
+                    if pic_wrap_zone.is_some() || (linfo.pgy >= pgy_start && linfo.pgy < pgy_end) {
                         Some((cs, sw))
                     } else {
                         None
@@ -1635,7 +1675,12 @@ pub fn parse_hwp3(data: &[u8]) -> Result<Document, Hwp3Error> {
     let mut pic_name_to_id = std::collections::HashMap::new();
 
     // 7. 문단 리스트 파싱 및 Document Model(IR)로 매핑 변환
-    let mut paragraphs = parse_paragraph_list(&mut body_cursor, &mut doc_char_shapes, &mut doc_para_shapes, &mut doc_border_fills, &mut pic_name_to_id)?;
+    // Square wrap 어울림 계산을 위해 페이지 레이아웃 정보 전달 (단위: HWPUNIT)
+    let body_left_hu = doc_info.left_margin as i32 * 4;
+    let body_right_hu = doc_info.right_margin as i32 * 4;
+    let paper_width_hu = doc_info.paper_width as i32 * 4;
+    let column_width_hu = (paper_width_hu - body_left_hu - body_right_hu).max(1);
+    let mut paragraphs = parse_paragraph_list(&mut body_cursor, &mut doc_char_shapes, &mut doc_para_shapes, &mut doc_border_fills, &mut pic_name_to_id, body_left_hu, column_width_hu)?;
 
 
     // 추가 정보 블록 읽기 (압축 해제된 스트림의 끝 부분)
