@@ -429,12 +429,9 @@ fn assign_auto_numbers_in_controls(
     for ctrl in controls.iter_mut() {
         match ctrl {
             Control::AutoNumber(an) => {
-                if an.assigned_number != 0 {
-                } else {
-                    let idx = counter_index(an.number_type);
-                    counters[idx] += 1;
-                    an.assigned_number = counters[idx];
-                }
+                let idx = counter_index(an.number_type);
+                counters[idx] += 1;
+                an.assigned_number = counters[idx];
             }
             Control::Table(table) => {
                 // 표 내부 셀의 문단도 처리
@@ -451,6 +448,7 @@ fn assign_auto_numbers_in_controls(
                 }
             }
             Control::Picture(pic) => {
+                // 그림 캡션 처리
                 if let Some(ref mut caption) = pic.caption {
                     for para in &mut caption.paragraphs {
                         assign_auto_numbers_in_controls(&mut para.controls, counters, counter_index);
@@ -546,6 +544,7 @@ pub fn parse_document(data: &[u8]) -> Result<Document, ParseError> {
         FileFormat::Hwp3 => {
             let mut doc = hwp3::parse_hwp3(data).map_err(ParseError::from)?;
             assign_auto_numbers(&mut doc);
+            hwp3::fixup_hwp3_picture_numbers(&mut doc);
             Ok(doc)
         },
         _ => HwpParser.parse(data),

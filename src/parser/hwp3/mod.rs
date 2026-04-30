@@ -1737,18 +1737,13 @@ pub fn parse_hwp3(data: &[u8]) -> Result<Document, Hwp3Error> {
     doc.doc_info.bin_data_list = doc_bin_data_list;
     doc.bin_data_content = doc_bin_data_content;
 
-    // HWP3는 그림 개체 자체가 카운터를 올린다 (캡션 유무 무관).
-    // assign_auto_numbers()가 포맷 중립이 되도록 파서에서 사전 할당한다.
-    assign_hwp3_picture_numbers(&mut doc);
-
     Ok(doc)
 }
 
-/// HWP3 그림 번호 사전 할당.
-/// assign_auto_numbers_in_controls와 동일한 순회 순서로 Control::Picture를 방문하여
-/// pic_counter를 증가시키고 캡션의 AutoNumber(Picture).assigned_number를 설정한다.
-/// assign_auto_numbers()는 assigned_number != 0인 AutoNumber를 건너뛰므로 이중 증가가 없다.
-fn assign_hwp3_picture_numbers(doc: &mut crate::model::document::Document) {
+/// HWP3 그림 번호 재할당 (assign_auto_numbers 호출 후 실행).
+/// HWP3는 그림 개체 자체가 카운터를 올린다 (캡션 유무 무관).
+/// assign_auto_numbers는 캡션 AutoNumber 기준으로 동작하므로 이 함수로 덮어쓴다.
+pub(crate) fn fixup_hwp3_picture_numbers(doc: &mut crate::model::document::Document) {
     let start = doc.doc_properties.picture_start_num.saturating_sub(1);
     let mut pic_counter: u16 = start;
     for section in &mut doc.sections {
