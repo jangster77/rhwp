@@ -419,10 +419,6 @@ pub(crate) fn assign_auto_numbers(doc: &mut Document) {
     }
 }
 
-/// 컨트롤 목록에서 AutoNumber를 찾아 번호를 할당한다.
-///
-/// `assigned_number != 0`인 AutoNumber는 파서에서 사전 할당된 것으로 간주하여 건너뛴다.
-/// (HWP3 파서가 `assign_hwp3_picture_numbers()`로 그림 번호를 사전 할당함)
 fn assign_auto_numbers_in_controls(
     controls: &mut [crate::model::control::Control],
     counters: &mut [u16; 6],
@@ -434,7 +430,6 @@ fn assign_auto_numbers_in_controls(
         match ctrl {
             Control::AutoNumber(an) => {
                 if an.assigned_number != 0 {
-                    // 파서에서 사전 할당됨 (HWP3 그림 번호 등) — 카운터 재증가 없이 유지
                 } else {
                     let idx = counter_index(an.number_type);
                     counters[idx] += 1;
@@ -456,8 +451,6 @@ fn assign_auto_numbers_in_controls(
                 }
             }
             Control::Picture(pic) => {
-                // 캡션 내 AutoNumber(Picture)를 만날 때 카운터 증가.
-                // HWP3는 파서에서 assigned_number를 사전 설정했으므로 위 AutoNumber 분기에서 skip된다.
                 if let Some(ref mut caption) = pic.caption {
                     for para in &mut caption.paragraphs {
                         assign_auto_numbers_in_controls(&mut para.controls, counters, counter_index);
