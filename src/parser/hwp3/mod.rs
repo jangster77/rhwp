@@ -180,18 +180,35 @@ pub(crate) fn parse_paragraph_list(
     let mut current_para_shape_id = 0u16;
     let mut prev_para_had_flags_break: bool = false;
     let mut prev_last_pgy: u16 = 0;
+    // Square wrap 그림 어울림 구역: (column_start, segment_width, pgy_start, pgy_end)
+    // 떠다니는 Square wrap 그림 문단을 만나면 갱신, pgy가 pgy_end를 넘으면 초기화.
+    let mut active_wrap_zone: Option<(i32, i32, u16, u16)> = None;
 
     loop {
         let para_start_pos = body_cursor.position();
         let para_info = Hwp3ParaInfo::read(&mut *body_cursor)?;
-
         if para_info.char_count == 0 {
             break; // 빈 문단, 리스트 끝
         }
 
         if para_info.follow_prev_para_shape == 0 {
             if let Some(ref hwp3_ps) = para_info.para_shape {
-                doc_para_shapes.push(convert_para_shape(hwp3_ps));
+                let mut ps = convert_para_shape(hwp3_ps);
+                if hwp3_ps.shade_ratio > 0 {
+                    let ratio = hwp3_ps.shade_ratio.min(100) as u32;
+                    let gray = (255 * (100 - ratio) / 100) as u8;
+                    let color = u32::from_le_bytes([gray, gray, gray, 0]);
+                    let mut bf = crate::model::style::BorderFill::default();
+                    bf.fill.fill_type = crate::model::style::FillType::Solid;
+                    bf.fill.solid = Some(crate::model::style::SolidFill {
+                        background_color: color,
+                        pattern_color: 0,
+                        pattern_type: 0,
+                    });
+                    doc_border_fills.push(bf);
+                    ps.border_fill_id = doc_border_fills.len() as u16; // 1-based (렌더러 규칙)
+                }
+                doc_para_shapes.push(ps);
                 current_para_shape_id = (doc_para_shapes.len() - 1) as u16;
             }
         }
@@ -432,7 +449,6 @@ pub(crate) fn parse_paragraph_list(
                             Ok(v) => v,
                             Err(_) => break,
                         };
-                        
                         for k in 0..3usize { if i + k < hwp3_char_to_utf16_pos.len() { hwp3_char_to_utf16_pos[i + k] = utf16_len; } }
                         i += 3; // 8바이트 헤더는 char_count에서 4개의 hchar를 차지합니다 (여기서 1개 읽고 3개 건너뜀)
                         
@@ -806,8 +822,6 @@ pub(crate) fn parse_paragraph_list(
                             pic.common.attr = build_common_obj_attr(&pic.common);
 
                             let n_ext_from_buf = (&info_buf[0..4]).read_u32::<LittleEndian>().unwrap_or(0);
-                            let n_ext_from_header = header_val1.saturating_sub(348);
-                            
                             let n_ext = n_ext_from_buf;
 
                             let mut ext_buf = vec![0u8; n_ext as usize];
@@ -993,17 +1007,22 @@ pub(crate) fn parse_paragraph_list(
                                 let _ = body_cursor.read_exact(&mut info_buf);
                             }
                         } else {
-                            // 알 수 없음
-                            if header_val1 < 1000000 {
-                                info_buf.resize(header_val1 as usize, 0);
-                                let _ = body_cursor.read_exact(&mut info_buf);
-                            }
+                            // 알 수 없음 (코드 0-4, 12, 27 등 예약 문자)
+                            // 8바이트 헤더(ch+field+ch2)만 소비. header_val1은 길이 필드가 아님.
+                            // ch=3 실증: hex dump에서 ch2=0x2E('.')로 스펙의 반복코드와 불일치.
+                            // 헤더 직후가 정상 단락 내용이므로 추가 skip 없음.
                         }
 
-                        char_offsets.push(utf16_len);
-                        utf16_len += 1;
-                        text_string.push('\u{FFFC}');
-                        
+                        // ch=15(숨은설명), ch=16(머리말/꼬리말), ch=17(각주/미주)는
+                        // HWP5 모델에서 인라인 앵커가 없는 비인라인 컨트롤이다.
+                        // \u{FFFC}를 text_string에 넣으면 폰트 미지원 글리프("?")로 렌더링되므로 생략.
+                        let is_non_inline_ctrl = ch == 15 || ch == 16 || ch == 17;
+                        if !is_non_inline_ctrl {
+                            char_offsets.push(utf16_len);
+                            utf16_len += 1;
+                            text_string.push('\u{FFFC}');
+                        }
+
                         if ch == 10 {
                             if parsed_is_hypertext {
                                 let mut text = String::new();
@@ -1164,6 +1183,12 @@ pub(crate) fn parse_paragraph_list(
                 }
             } else if ch != 0 && ch != 13 {
                 let s = crate::parser::hwp3::johab::decode_johab(ch);
+                // ch 0x0080..0x7FFF 범위: decode_johab가 매핑 못 하면 '?'를 반환한다.
+                // ASCII '?'(=0x003F)와 달리, 이 범위의 미지원 코드는 한글/한자/필드
+                // 코드일 가능성이 높으므로 '?' 그대로 출력하지 않고 건너뛴다.
+                if s == '?' && ch >= 0x0080 {
+                    continue;
+                }
                 char_offsets.push(utf16_len);
                 utf16_len += s.len_utf16() as u32;
                 text_string.push(s);
@@ -1228,14 +1253,67 @@ pub(crate) fn parse_paragraph_list(
             0
         };
 
+        // Square wrap 그림 어울림 구역 계산 (per-line, pgy 기반)
+        // controls가 완성된 이후, line_segs 생성 전에 수행한다.
+        let first_pgy_here = line_infos.first().map(|l| l.pgy).unwrap_or(0);
+        let last_pgy_here = line_infos.last().map(|l| l.pgy).unwrap_or(first_pgy_here);
+
+        // 이 문단에 Square wrap 그림이 있으면 구역 좌표(pgy_start, pgy_end) 계산.
+        // column_start=0, segment_width=그림 좌측 경계(=텍스트 구역 우측 경계, HWPUNIT).
+        let pic_wrap_zone: Option<(i32, i32, u16, u16)> = para.controls.iter().find_map(|c| {
+            if let crate::model::control::Control::Picture(pic) = c {
+                if !pic.common.treat_as_char
+                    && matches!(pic.common.text_wrap, crate::model::shape::TextWrap::Square)
+                    && pic.common.horizontal_offset > 0
+                {
+                    let v_off_hunit = (pic.common.vertical_offset / 4) as u16;
+                    let h_hunit = (pic.common.height / 4) as u16;
+                    let pgy_start = first_pgy_here.saturating_add(v_off_hunit);
+                    let pgy_end = pgy_start.saturating_add(h_hunit);
+                    Some((0i32, pic.common.horizontal_offset as i32, pgy_start, pgy_end))
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        });
+
+        // 페이지 경계 여부 (pgy 감소 = 새 페이지)
+        let is_page_break = prev_last_pgy > 0 && first_pgy_here > 0 && first_pgy_here < prev_last_pgy;
+
+        // 현재 문단에 적용할 어울림 구역:
+        // 자신이 그림 호스트면 pic_wrap_zone, 아니면 이전 문단에서 이어진 active_wrap_zone.
+        let current_zone: Option<(i32, i32, u16, u16)> =
+            pic_wrap_zone.or(if is_page_break { None } else { active_wrap_zone });
+
+        // active_wrap_zone 갱신
+        if let Some(new_zone) = pic_wrap_zone {
+            active_wrap_zone = Some(new_zone);
+        } else if let Some((_, _, _, pgy_end)) = active_wrap_zone {
+            if is_page_break || last_pgy_here >= pgy_end {
+                active_wrap_zone = None;
+            }
+        }
+
         let mut line_segs = Vec::with_capacity(line_infos.len().max(1));
         if line_infos.is_empty() {
+            // line_infos 없음: first_pgy_here로 구역 판정
+            let cs_sw = current_zone.and_then(|(cs, sw, pgy_start, pgy_end)| {
+                if first_pgy_here >= pgy_start && first_pgy_here < pgy_end {
+                    Some((cs, sw))
+                } else {
+                    None
+                }
+            });
             line_segs.push(LineSeg {
                 text_start: 0,
                 line_height: fallback_line_height,
                 text_height: fallback_text_height,
                 baseline_distance: fallback_baseline_distance,
                 line_spacing: fallback_line_spacing,
+                column_start: cs_sw.map(|(cs, _)| cs).unwrap_or(0),
+                segment_width: cs_sw.map(|(_, sw)| sw).unwrap_or(0),
                 tag: 0x00060000,
                 ..Default::default()
             });
@@ -1253,7 +1331,7 @@ pub(crate) fn parse_paragraph_list(
                 let mut lh;
                 let mut bl;
                 let mut ls;
-                
+
                 if th == 0 {
                     lh = fallback_line_height;
                     th = fallback_text_height;
@@ -1279,6 +1357,15 @@ pub(crate) fn parse_paragraph_list(
                     }
                 }
 
+                // 이 줄의 pgy로 어울림 구역 판정 (per-line)
+                let line_cs_sw = current_zone.and_then(|(cs, sw, pgy_start, pgy_end)| {
+                    if linfo.pgy >= pgy_start && linfo.pgy < pgy_end {
+                        Some((cs, sw))
+                    } else {
+                        None
+                    }
+                });
+
                 line_segs.push(LineSeg {
                     text_start,
                     vertical_pos: 0,
@@ -1286,8 +1373,8 @@ pub(crate) fn parse_paragraph_list(
                     text_height: th,
                     baseline_distance: bl,
                     line_spacing: ls,
-                    column_start: 0,
-                    segment_width: 0,
+                    column_start: line_cs_sw.map(|(cs, _)| cs).unwrap_or(0),
+                    segment_width: line_cs_sw.map(|(_, sw)| sw).unwrap_or(0),
                     tag,
                 });
             }
@@ -1497,7 +1584,7 @@ pub fn parse_hwp3(data: &[u8]) -> Result<Document, Hwp3Error> {
 
     // 5. 글꼴 이름 파싱 (7가지 언어별 반복)
     let mut font_faces = Vec::new();
-    for _ in 0..7 {
+    for _lang_idx in 0..7u8 {
         use byteorder::{LittleEndian, ReadBytesExt};
         let nfonts = body_cursor.read_u16::<LittleEndian>().map_err(|e| Hwp3Error::IoError { source: e })?;
         let mut face_list = Vec::new();
