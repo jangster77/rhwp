@@ -2077,6 +2077,11 @@ impl LayoutEngine {
         let has_offset = content_offset > 0.0;
         let has_limit = content_limit > 0.0;
         let mut cum: f64 = 0.0;
+        // [Task #431] content_limit 은 현재 페이지에서 표시할 상대 길이(px) 의미이므로
+        // 절대 좌표(cum 기반)와 비교하려면 content_offset 을 더해 절대 끝 좌표로 변환한다.
+        // (Task #362 의 도입 시점에 단위 mismatch 가 있었음 — content_offset >= content_limit
+        // 케이스에서 셀 내 문단이 즉시 break 되어 빈 페이지로 출력되던 결함 정정.)
+        let abs_limit = if has_limit { content_offset + content_limit } else { 0.0 };
 
         let total_paras = composed_paras.len();
         for (pi, (comp, para)) in composed_paras.iter().zip(cell.paragraphs.iter()).enumerate() {
@@ -2126,7 +2131,8 @@ impl LayoutEngine {
                 // v0.7.3 의 처리 시멘틱과 동일.
                 let was_on_prev = has_offset && para_end_pos <= content_offset;
                 let bigger_than_page = has_limit && para_h > content_limit;
-                let exceeds_limit = has_limit && para_end_pos > content_limit && !bigger_than_page;
+                // [Task #431] abs_limit (= content_offset + content_limit) 와 비교 (단위 정합)
+                let exceeds_limit = has_limit && para_end_pos > abs_limit && !bigger_than_page;
                 let visible_count = if line_count == 0 { 0 } else { line_count };
                 if was_on_prev || exceeds_limit {
                     // (n,n): 렌더 스킵 마커. line_count==0 이면 (0,0) 동일.
@@ -2165,7 +2171,8 @@ impl LayoutEngine {
                     continue;
                 }
 
-                if has_limit && line_end_pos > content_limit {
+                if has_limit && line_end_pos > abs_limit {
+                    // [Task #431] abs_limit (= content_offset + content_limit) 와 비교 (단위 정합)
                     // limit 초과 → 이 줄과 이후 모든 콘텐츠 차단
                     break;
                 }
