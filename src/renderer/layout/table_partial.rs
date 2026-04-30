@@ -240,6 +240,7 @@ impl LayoutEngine {
                 self.render_cell_background(
                     tree, &mut table_node, Some(tbl_bs),
                     table_x, table_y, table_width, partial_table_height,
+                    bin_data_content,
                 );
             }
         }
@@ -337,7 +338,7 @@ impl LayoutEngine {
             };
 
             // 셀 배경
-            self.render_cell_background(tree, &mut cell_node, border_style, cell_x, cell_y, cell_w, cell_h);
+            self.render_cell_background(tree, &mut cell_node, border_style, cell_x, cell_y, cell_w, cell_h, bin_data_content);
 
             // 셀 패딩
             let (mut pad_left, mut pad_right, pad_top, pad_bottom) = self.resolve_cell_padding(cell, table);
