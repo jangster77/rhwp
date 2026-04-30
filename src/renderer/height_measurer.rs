@@ -586,7 +586,24 @@ impl HeightMeasurer {
                 };
 
                 // 패딩 포함 총 필요 높이
-                let required_height = content_height + pad_top + pad_bottom;
+                // [Task #501] cell.padding 이 IR cell.height 의 절반을 초과하는 비정상
+                // 케이스 (mel-001 p2 셀[21]: cell.h=1280 HU, pad.top+bottom=3400 HU) 가드:
+                // 비정상 padding 이 row_heights 를 확장하면 TAC 표 비례 축소가 모든 행에
+                // 영향. content_height 가 IR cell.height 안에 들어가면 IR 권위 우선.
+                let total_pad = pad_top + pad_bottom;
+                let cell_h_px = if cell.height < 0x80000000 {
+                    hwpunit_to_px(cell.height as i32, self.dpi)
+                } else {
+                    0.0
+                };
+                let required_height = if cell_h_px > 0.0
+                    && total_pad > cell_h_px * 0.5
+                    && content_height <= cell_h_px
+                {
+                    cell_h_px
+                } else {
+                    content_height + total_pad
+                };
                 if required_height > row_heights[r] {
                     row_heights[r] = required_height;
                 }
