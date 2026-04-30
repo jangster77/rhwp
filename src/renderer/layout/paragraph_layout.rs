@@ -1680,18 +1680,9 @@ impl LayoutEngine {
                     let mut seg_start = 0usize;
                     let mut sub_char_offset = char_offset;
 
-                    // 인라인 Shape 중 글상자(TextBox)가 있는 경우에만 텍스트 스킵
-                    // (글상자 텍스트는 table_layout에서 렌더링)
-                    // 단순 도형(사각형, 원 등)은 TextBox가 없으므로 텍스트를 여기서 렌더링
-                    let skip_text_for_inline_shape = has_tac_shape && para.map(|p| {
-                        tac_offsets_px.iter().any(|(_, _, ci)| {
-                            if let Some(Control::Shape(s)) = p.controls.get(*ci) {
-                                s.drawing().map(|d| d.text_box.is_some()).unwrap_or(false)
-                            } else {
-                                false
-                            }
-                        })
-                    }).unwrap_or(false);
+                    // [Task #455] 외부 문단 본문 텍스트는 글상자 유무와 무관하게 항상 렌더한다.
+                    // 글상자(TextBox) 자체와 그 내부 텍스트("개화" 같은)는
+                    // shape_layout 이 inline_shape_position 을 보고 별도 패스에서 렌더하므로 중복되지 않는다.
 
                     for &(tac_rel, tac_w, tac_ci) in &run_tacs {
                         // tac 앞 텍스트 세그먼트 렌더링
@@ -1706,7 +1697,7 @@ impl LayoutEngine {
                             }
                             let seg_w = estimate_text_width(&seg_text, &seg_style);
                             let seg_char_count = tac_rel - seg_start;
-                            if !skip_text_for_inline_shape {
+                            {
                                 let sub_run_id = tree.next_id();
                                 let sub_run_node = RenderNode::new(
                                     sub_run_id,
@@ -1744,6 +1735,17 @@ impl LayoutEngine {
                                     let bin_data_id = pic.image_attr.bin_data_id;
                                     let image_data = find_bin_data(bdc, bin_data_id)
                                         .map(|c| c.data.clone());
+                                    let crop = {
+                                        let c = &pic.crop;
+                                        if c.right > c.left && c.bottom > c.top
+                                            && (c.left != 0 || c.top != 0 || c.right != 0 || c.bottom != 0) {
+                                            Some((c.left, c.top, c.right, c.bottom))
+                                        } else { None }
+                                    };
+                                    let original_size_hu = if pic.shape_attr.original_width > 0
+                                        && pic.shape_attr.original_height > 0 {
+                                        Some((pic.shape_attr.original_width, pic.shape_attr.original_height))
+                                    } else { None };
                                     let img_id = tree.next_id();
                                     let img_node = RenderNode::new(
                                         img_id,
@@ -1751,6 +1753,8 @@ impl LayoutEngine {
                                             section_index: Some(section_index),
                                             para_index: Some(para_index),
                                             control_index: Some(tac_ci),
+                                            crop,
+                                            original_size_hu,
                                             effect: pic.image_attr.effect,
                                             brightness: pic.image_attr.brightness,
                                             contrast: pic.image_attr.contrast,
@@ -1897,7 +1901,7 @@ impl LayoutEngine {
                             seg_style.tab_leaders = extract_tab_leaders_with_extended(&remaining, &positions, &seg_style, &composed.tab_extended);
                         }
                         let seg_w = estimate_text_width(&remaining, &seg_style);
-                        if !skip_text_for_inline_shape {
+                        {
                             let sub_run_id = tree.next_id();
                             let sub_run_node = RenderNode::new(
                                 sub_run_id,
@@ -2004,6 +2008,17 @@ impl LayoutEngine {
                                 let bin_data_id = pic.image_attr.bin_data_id;
                                 let image_data = find_bin_data(bdc, bin_data_id)
                                     .map(|c| c.data.clone());
+                                let crop = {
+                                    let c = &pic.crop;
+                                    if c.right > c.left && c.bottom > c.top
+                                        && (c.left != 0 || c.top != 0 || c.right != 0 || c.bottom != 0) {
+                                        Some((c.left, c.top, c.right, c.bottom))
+                                    } else { None }
+                                };
+                                let original_size_hu = if pic.shape_attr.original_width > 0
+                                    && pic.shape_attr.original_height > 0 {
+                                    Some((pic.shape_attr.original_width, pic.shape_attr.original_height))
+                                } else { None };
                                 let img_id = tree.next_id();
                                 let img_node = RenderNode::new(
                                     img_id,
@@ -2011,6 +2026,8 @@ impl LayoutEngine {
                                         section_index: Some(section_index),
                                         para_index: Some(para_index),
                                         control_index: Some(tac_ci),
+                                        crop,
+                                        original_size_hu,
                                         effect: pic.image_attr.effect,
                                         brightness: pic.image_attr.brightness,
                                         contrast: pic.image_attr.contrast,
@@ -2089,6 +2106,17 @@ impl LayoutEngine {
                                     let bin_data_id = pic.image_attr.bin_data_id;
                                     let image_data = find_bin_data(bdc, bin_data_id)
                                         .map(|c| c.data.clone());
+                                    let crop = {
+                                        let c = &pic.crop;
+                                        if c.right > c.left && c.bottom > c.top
+                                            && (c.left != 0 || c.top != 0 || c.right != 0 || c.bottom != 0) {
+                                            Some((c.left, c.top, c.right, c.bottom))
+                                        } else { None }
+                                    };
+                                    let original_size_hu = if pic.shape_attr.original_width > 0
+                                        && pic.shape_attr.original_height > 0 {
+                                        Some((pic.shape_attr.original_width, pic.shape_attr.original_height))
+                                    } else { None };
                                     let img_id = tree.next_id();
                                     let img_node = RenderNode::new(
                                         img_id,
@@ -2096,6 +2124,8 @@ impl LayoutEngine {
                                             section_index: Some(section_index),
                                             para_index: Some(para_index),
                                             control_index: Some(tac_ci),
+                                            crop,
+                                            original_size_hu,
                                             effect: pic.image_attr.effect,
                                             brightness: pic.image_attr.brightness,
                                             contrast: pic.image_attr.contrast,
@@ -2504,15 +2534,15 @@ impl LayoutEngine {
             }
 
             col_node.children.push(line_node);
-            // 줄간격 적용 — typeset 의 height_for_fit 모델과 정합:
-            //   - 셀 내 마지막 문단의 마지막 줄: 기존대로 trailing 제외
-            //   - 일반 문단의 마지막 visible 줄(=문단 전체 마지막 줄): trailing 제외 (Task #332)
-            //   - partial 문단(split 된 경우)의 마지막 visible 줄: trailing 유지 (다음 단의 첫 줄과의 간격)
+            // 줄간격 적용:
+            //   - 셀 내 마지막 문단의 마지막 줄: trailing line_spacing 제외
+            //     (셀 높이 모델은 trailing 미포함, 셀 내부와 정합)
+            //   - 그 외 모든 줄(본문 단락의 마지막 줄 포함): trailing line_spacing 가산
+            //     pagination/engine.rs 의 current_height 누적(para_height = sum(lh+ls))
+            //     과 정합. (Task #452: 이전 #332 의 layout-only trailing 제외 →
+            //     pagination 과 1 ls drift 발생 → 회복)
             let is_cell_last_line = is_last_cell_para && line_idx + 1 >= end;
-            let is_para_last_line = cell_ctx.is_none()
-                && line_idx + 1 == end
-                && end == composed.lines.len();
-            if (is_cell_last_line && cell_ctx.is_some()) || is_para_last_line {
+            if is_cell_last_line && cell_ctx.is_some() {
                 y += line_height;
             } else {
                 let line_spacing_px = hwpunit_to_px(comp_line.line_spacing, self.dpi);
@@ -2521,8 +2551,11 @@ impl LayoutEngine {
         }
 
         // 문단 테두리/배경 범위 수집 (build_single_column에서 연속 그룹으로 병합 렌더링)
-        // margin_left/margin_right를 반영하여 박스 위치·폭 조정
-        if para_border_fill_id > 0 {
+        // margin_left/margin_right를 반영하여 박스 위치·폭 조정.
+        // Task #463: 셀 안 단락은 본문 큐에 leakage 하지 않도록 cell_ctx 게이팅.
+        // 셀 외곽선은 별도 경로(table_layout/border_rendering)에서 처리되므로
+        // 본문 단락의 연속 외곽선 merge 가 셀 단락 좌표/시그니처에 의해 깨지지 않게 한다.
+        if para_border_fill_id > 0 && cell_ctx.is_none() {
             let bg_height = y - bg_y_start;
             if bg_height > 0.0 {
                 // margin_left/margin_right는 이미 px 단위 (style_resolver에서 변환됨)
@@ -2532,8 +2565,19 @@ impl LayoutEngine {
                 // 컬럼/페이지 wrap 시 inner edge 미렌더링용 partial 플래그
                 let is_partial_start = start_line > 0;
                 let is_partial_end = end < composed.lines.len();
+                // Task #463: wrap=Square 호스트 문단의 텍스트는 좁은 wrap_area 에서
+                // 렌더링되지만 외곽선은 원래 col_area 너비로 그려야 floating 표를
+                // 박스가 둘러쌈. layout_wrap_around_paras 가 override 를 설정.
+                // override 가 활성된 경우(wrap host), 박스 우측은 floating 표의 끝
+                // 까지 확장된 width 그대로 사용 — margin_right 차감하지 않는다
+                // (그렇지 않으면 표가 박스 밖으로 다시 튀어나옴).
+                let (box_x, box_w) = if let Some((ox, ow)) = self.border_box_override.get() {
+                    (ox + box_margin_left, ow - box_margin_left)
+                } else {
+                    (col_area.x + box_margin_left, col_area.width - box_margin_left - box_margin_right)
+                };
                 self.para_border_ranges.borrow_mut().push(
-                    (para_border_fill_id, col_area.x + box_margin_left, bg_y_start, col_area.width - box_margin_left - box_margin_right, y, top_inset, bottom_inset, is_partial_start, is_partial_end)
+                    (para_border_fill_id, box_x, bg_y_start, box_w, y, top_inset, bottom_inset, is_partial_start, is_partial_end, para_index)
                 );
             }
         }
