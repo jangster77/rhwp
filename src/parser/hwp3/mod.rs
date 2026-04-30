@@ -88,6 +88,24 @@ fn build_common_obj_attr(common: &crate::model::shape::CommonObjAttr) -> u32 {
     attr
 }
 
+fn build_raw_ctrl_data(common: &crate::model::shape::CommonObjAttr) -> Vec<u8> {
+    let mut data = Vec::with_capacity(42);
+    data.extend_from_slice(&common.attr.to_le_bytes());
+    data.extend_from_slice(&common.vertical_offset.to_le_bytes());
+    data.extend_from_slice(&common.horizontal_offset.to_le_bytes());
+    data.extend_from_slice(&common.width.to_le_bytes());
+    data.extend_from_slice(&common.height.to_le_bytes());
+    data.extend_from_slice(&common.z_order.to_le_bytes());
+    data.extend_from_slice(&common.margin.left.to_le_bytes());
+    data.extend_from_slice(&common.margin.right.to_le_bytes());
+    data.extend_from_slice(&common.margin.top.to_le_bytes());
+    data.extend_from_slice(&common.margin.bottom.to_le_bytes());
+    data.extend_from_slice(&common.instance_id.to_le_bytes());
+    data.extend_from_slice(&common.prevent_page_break.to_le_bytes());
+    data.extend_from_slice(&0u16.to_le_bytes()); // empty description
+    data
+}
+
 pub(crate) fn convert_char_shape(hwp3_cs: &crate::parser::hwp3::records::Hwp3CharShape) -> crate::model::style::CharShape {
     let mut cs = crate::model::style::CharShape::default();
     // HWP 3.0에서 크기는 pt당 25 단위로 주어집니다. 내부 모델의 base_size는 HWPUNIT(pt당 100 단위)입니다.
@@ -502,6 +520,9 @@ pub(crate) fn parse_paragraph_list(
                                 // typeset.rs는 table.attr(=common.attr)로 is_tac/text_wrap을 판정한다.
                                 // HWP5 파서도 table.attr = table.common.attr 로 동기화하므로 동일하게 설정한다.
                                 table.attr = table.common.attr;
+                                // HWP5 저장 시 serialize_table이 raw_ctrl_data를 그대로 기록한다.
+                                // 미리 채워두면 serializer/hwpx_to_hwp 수정 없이 attr가 올바르게 저장된다.
+                                table.raw_ctrl_data = build_raw_ctrl_data(&table.common);
 
                                 let cell_padding_left = (&info_buf[34..36]).read_i16::<LittleEndian>().unwrap_or(0) as u32 * 4;
                                 let cell_padding_right = (&info_buf[36..38]).read_i16::<LittleEndian>().unwrap_or(0) as u32 * 4;
@@ -1557,6 +1578,7 @@ pub fn parse_hwp3(data: &[u8]) -> Result<Document, Hwp3Error> {
                     extension: Some(ext),
                     data_type: crate::model::bin_data::BinDataType::Embedding,
                     compression: crate::model::bin_data::BinDataCompression::Default,
+                    attr: 1, // type=Embedding(bits 0-3=1), compression=Default(bits 4-5=0)
                     ..Default::default()
                 };
                 temp_bin_data_content.push(content);

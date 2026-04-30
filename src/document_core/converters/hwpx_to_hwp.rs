@@ -153,16 +153,18 @@ fn adapt_table(table: &mut Table, report: &mut AdapterReport) {
         report.tables_ctrl_data_synthesized += 1;
 
         // Task #317: HWPX 출처는 common.attr=0 (HWPX 파서가 attr 비트를 채우지 않음).
+        // serialize_common_obj_attr 는 common.attr=0 일 때 enum 으로부터 비트 합성 하지만,
+        // typeset 엔진은 table.attr & 0x01 로 is_tac 을 판정 (common.treat_as_char 아님).
         // HWPX 직접 로드에서는 attr=0 이므로 모든 표가 block 분기로 처리됨.
-        // → common.attr=0 인 경우(HWPX)만 attr=0 으로 고정. HWP3 출처는 common.attr≠0이므로 보존.
-        if table.common.attr == 0 && table.raw_ctrl_data.len() >= 4 {
+        // 어댑터 경로에서 attr 합성하면 일부 표가 TAC 분기로 분기되어 페이지 누적이 달라짐.
+        // → DIRECT 와 동일하게 attr=0 으로 고정.
+        if table.raw_ctrl_data.len() >= 4 {
             table.raw_ctrl_data[0..4].copy_from_slice(&0u32.to_le_bytes());
         }
     }
 
-    // table.attr 은 raw_ctrl_data 의 진실값과 일치.
-    // HWPX 출처: common.attr=0 → attr=0. HWP3 출처: common.attr 반영.
-    table.attr = table.common.attr;
+    // table.attr 은 raw_ctrl_data 의 진실값과 일치 (=0).
+    table.attr = 0;
 
     // 셀별 보강 + 내부 문단 재귀 (중첩 표 대응)
     for cell in &mut table.cells {

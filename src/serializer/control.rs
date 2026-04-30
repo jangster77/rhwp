@@ -345,13 +345,9 @@ fn serialize_column_def(cd: &ColumnDef, level: u16, records: &mut Vec<Record>) {
 fn serialize_table(table: &Table, level: u16, records: &mut Vec<Record>) {
     // CTRL_HEADER: raw_ctrl_data는 CommonObjAttr 전체 (attr 포함)
     // Task 271에서 파싱 변경: ctrl_data 전체 = CommonObjAttr
-    // raw_ctrl_data가 없으면 (HWP3 파서 등) table.common에서 재구성한다.
-    let ctrl_data = if !table.raw_ctrl_data.is_empty() {
-        table.raw_ctrl_data.clone()
-    } else {
-        serialize_common_obj_attr(&table.common)
-    };
-    records.push(make_ctrl_record(tags::CTRL_TABLE, level, &ctrl_data));
+    records.push(make_ctrl_record(tags::CTRL_TABLE, level,
+        if !table.raw_ctrl_data.is_empty() { &table.raw_ctrl_data } else { &[] }
+    ));
 
     // 캡션 (TABLE 이전, level+1)
     if let Some(ref caption) = table.caption {
