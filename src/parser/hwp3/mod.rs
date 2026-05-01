@@ -1553,6 +1553,17 @@ pub(crate) fn parse_paragraph_list(
         paragraphs.push(para);
     }
 
+    // LineSeg cs/sw가 사전 계산된 wrap zone 문단 표시.
+    // 조건: LineSeg가 2개 이상 + 모두 vertical_pos=0 + 하나 이상 column_start>0
+    for para in &mut paragraphs {
+        if para.line_segs.len() > 1
+            && para.line_segs.iter().all(|s| s.vertical_pos == 0)
+            && para.line_segs.iter().any(|s| s.column_start > 0)
+        {
+            para.wrap_precomputed = true;
+        }
+    }
+
     Ok(paragraphs)
 }
 

@@ -857,6 +857,19 @@ impl LayoutEngine {
                     text_y + line_height, col_bottom, text_y + line_height - col_bottom,
                 );
             }
+            // wrap_precomputed: 파서가 LineSeg cs/sw를 사전 계산한 문단.
+            // 각 라인의 LineSeg cs(column_start)를 x 오프셋으로, sw(segment_width)를 너비로 적용.
+            let (line_cs_offset, line_avail_w_override) = if para.map(|p| p.wrap_precomputed).unwrap_or(false) {
+                let seg = para.and_then(|p| p.line_segs.get(line_idx));
+                let cs = seg.map(|s| s.column_start as i32).unwrap_or(0);
+                let sw = seg.map(|s| s.segment_width as i32).unwrap_or(0);
+                let cs_px = crate::renderer::hwpunit_to_px(cs, self.dpi);
+                let sw_px = if sw > 0 { Some(crate::renderer::hwpunit_to_px(sw, self.dpi)) } else { None };
+                (cs_px, sw_px)
+            } else {
+                (0.0, None)
+            };
+
             let line_id = tree.next_id();
             let mut line_node = RenderNode::new(
                 line_id,
@@ -865,9 +878,16 @@ impl LayoutEngine {
                     TextLineNode::with_para_vpos(line_height, baseline, section_index, para_index, line_idx as u32, vpos)
                 }),
                 BoundingBox::new(
-                    effective_col_x + effective_margin_left,
+                    // Task #460 보완6: wrap_precomputed면 line_cs_offset 사용 (col_area.x 기준),
+                    // 아니면 Task #489 effective_col_x 사용. 두 경로 중복 적용 방지.
+                    if para.map(|p| p.wrap_precomputed).unwrap_or(false) {
+                        col_area.x + effective_margin_left + line_cs_offset
+                    } else {
+                        effective_col_x + effective_margin_left
+                    },
                     text_y,
-                    effective_col_w - effective_margin_left - margin_right,
+                    line_avail_w_override
+                        .unwrap_or(effective_col_w - effective_margin_left - margin_right),
                     line_height,
                 ),
             );
@@ -875,12 +895,15 @@ impl LayoutEngine {
             let inline_offset = if line_idx == start_line { first_line_x_offset } else { 0.0 };
             // 번호/글머리표 마커: 모든 줄에서 마커 폭만큼 가용폭 차감 (행잉 인덴트)
             let num_offset = if numbering_width > 0.0 { numbering_width } else { 0.0 };
-            let available_width = effective_col_w - effective_margin_left - margin_right - inline_offset - num_offset;
+            let available_width = line_avail_w_override
+                .map(|w| w - inline_offset - num_offset)
+                .unwrap_or(effective_col_w - effective_margin_left - margin_right - inline_offset - num_offset);
 
 
             // 텍스트 정렬을 위한 전체 줄 폭 계산 (자연 폭, 추가 간격 미포함)
             // treat_as_char 이미지 폭도 포함하여 정확한 폭 산출
-            let mut est_x = effective_margin_left + inline_offset;
+            // wrap_precomputed: line_cs_offset을 est_x 기준점에 포함 (line_x_offset은 col_area.x 기준 상대좌표)
+            let mut est_x = effective_margin_left + line_cs_offset + inline_offset;
             let est_x_start = est_x;
             let mut pending_right_tab_est: Option<(f64, u8, u8)> = None;
             let mut run_char_pos_est = comp_line.char_start;
@@ -1180,17 +1203,24 @@ impl LayoutEngine {
             let num_x_offset = if num_offset > 0.0 && !(line_idx == start_line && start_line == 0) {
                 num_offset
             } else { 0.0 };
+            // Task #460 보완6: wrap_precomputed면 col_area.x + line_cs_offset 기준,
+            // 아니면 effective_col_x (Task #489) 기준
+            let x_base = if para.map(|p| p.wrap_precomputed).unwrap_or(false) {
+                col_area.x + effective_margin_left + line_cs_offset
+            } else {
+                effective_col_x + effective_margin_left
+            };
             let x_start = match alignment {
                 Alignment::Center => {
-                    effective_col_x + effective_margin_left + inline_offset + num_x_offset + (available_width - effective_text_width).max(0.0) / 2.0
+                    x_base + inline_offset + num_x_offset + (available_width - effective_text_width).max(0.0) / 2.0
                 }
                 Alignment::Distribute if !needs_distribute || total_char_count <= 1 => {
-                    effective_col_x + effective_margin_left + inline_offset + num_x_offset + (available_width - effective_text_width).max(0.0) / 2.0
+                    x_base + inline_offset + num_x_offset + (available_width - effective_text_width).max(0.0) / 2.0
                 }
                 Alignment::Right => {
-                    effective_col_x + effective_margin_left + inline_offset + num_x_offset + (available_width - effective_text_width).max(0.0)
+                    x_base + inline_offset + num_x_offset + (available_width - effective_text_width).max(0.0)
                 }
-                _ => effective_col_x + effective_margin_left + inline_offset + num_x_offset, // Left, Justify, Split, Distribute(분배중)
+                _ => x_base + inline_offset + num_x_offset, // Left, Justify, Split, Distribute(분배중)
             };
 
             // TextRun 노드 생성
