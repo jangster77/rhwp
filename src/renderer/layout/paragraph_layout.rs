@@ -1793,6 +1793,7 @@ impl LayoutEngine {
                                             effect: pic.image_attr.effect,
                                             brightness: pic.image_attr.brightness,
                                             contrast: pic.image_attr.contrast,
+                                            text_wrap: Some(pic.common.text_wrap),
                                             ..ImageNode::new(bin_data_id, image_data)
                                         }),
                                         BoundingBox::new(x, img_y, tac_w, pic_h),
@@ -2066,6 +2067,7 @@ impl LayoutEngine {
                                         effect: pic.image_attr.effect,
                                         brightness: pic.image_attr.brightness,
                                         contrast: pic.image_attr.contrast,
+                                        text_wrap: Some(pic.common.text_wrap),
                                         ..ImageNode::new(bin_data_id, image_data)
                                     }),
                                     BoundingBox::new(x, img_y, tac_w, pic_h),
@@ -2175,6 +2177,7 @@ impl LayoutEngine {
                                             effect: pic.image_attr.effect,
                                             brightness: pic.image_attr.brightness,
                                             contrast: pic.image_attr.contrast,
+                                            text_wrap: Some(pic.common.text_wrap),
                                             ..ImageNode::new(bin_data_id, image_data)
                                         }),
                                         BoundingBox::new(img_x, img_y, tac_w, pic_h),
