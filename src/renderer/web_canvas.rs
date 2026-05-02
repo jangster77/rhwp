@@ -59,6 +59,10 @@ fn detect_image_mime_type(data: &[u8]) -> &'static str {
         "image/bmp"
     } else if data.len() >= 4 && (data.starts_with(&[0xD7, 0xCD, 0xC6, 0x9A]) || data.starts_with(&[0x01, 0x00, 0x09, 0x00])) {
         "image/x-wmf"
+    } else if data.len() >= 2 && data.starts_with(&[0x0A, 0x05]) {
+        // PCX: 0A 05 (ZSoft Paintbrush v3.0+, Task #514)
+        // 브라우저 native 미지원 → emit 시 PNG 변환 필요 (svg::pcx_bytes_to_png_bytes)
+        "image/x-pcx"
     } else if super::svg_fragment::is_svg_prefix(data) {
         // Task #275: RawSvg 래퍼 경로 — <svg 또는 <?xml + <svg
         "image/svg+xml"
@@ -1859,9 +1863,15 @@ impl Renderer for WebCanvasRenderer {
         let mime_type = detect_image_mime_type(data);
 
         // WMF → SVG 변환 (브라우저는 WMF를 렌더링할 수 없으므로 SVG로 변환)
+        // PCX → PNG 변환 (브라우저는 PCX 포맷을 native 렌더링하지 못함, Task #514)
         let (render_data, render_mime): (std::borrow::Cow<[u8]>, &str) = if mime_type == "image/x-wmf" {
             match crate::renderer::svg::convert_wmf_to_svg(data) {
                 Some(svg_bytes) => (std::borrow::Cow::Owned(svg_bytes), "image/svg+xml"),
+                None => (std::borrow::Cow::Borrowed(data), mime_type),
+            }
+        } else if mime_type == "image/x-pcx" {
+            match crate::renderer::svg::pcx_bytes_to_png_bytes(data) {
+                Some(png_bytes) => (std::borrow::Cow::Owned(png_bytes), "image/png"),
                 None => (std::borrow::Cow::Borrowed(data), mime_type),
             }
         } else {
