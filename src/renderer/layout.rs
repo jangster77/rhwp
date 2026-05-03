@@ -1347,46 +1347,6 @@ impl LayoutEngine {
         let mut fix_table_visual_h: f64 = 0.0;
         let mut fix_overlay_active = false;
 
-        // Square wrap 그림 어울림: 그림 하단 y(페이지 기준) 계산.
-        // wrap_around_paras가 있으면 앵커 문단의 그림에서 그림 하단을 구한다.
-        // 어울림 문단(wrap_around_paras)이 끝난 뒤 첫 번째 일반 문단의 y를 그림 하단으로 밀어내는 데 사용.
-        // y_offset은 페이지 상단 기준 절대 픽셀값이므로 wrap_pic_bottom_y도 동일 기준으로 계산.
-        let mut wrap_pic_bottom_y: f64 = 0.0;
-        // 앵커 Shape가 처리된 이후에만 y_offset 보정을 적용. 앵커 자신은 대상 제외.
-        let mut wrap_anchor_shape_seen: bool = false;
-        let wrap_around_set: std::collections::HashSet<usize> =
-            col_content.wrap_around_paras.iter().map(|w| w.para_index).collect();
-        let wrap_anchor_pi: Option<usize> = col_content.wrap_around_paras.first().map(|w| w.table_para_index);
-        if !col_content.wrap_around_paras.is_empty() {
-            let anchor_pi = col_content.wrap_around_paras[0].table_para_index;
-            if let Some(anchor_para) = paragraphs.get(anchor_pi) {
-                for ctrl in &anchor_para.controls {
-                    let cm = match ctrl {
-                        Control::Picture(p) if !p.common.treat_as_char
-                            && matches!(p.common.text_wrap, crate::model::shape::TextWrap::Square) => &p.common,
-                        Control::Shape(s) => {
-                            if let crate::model::shape::ShapeObject::Picture(p) = s.as_ref() {
-                                if !p.common.treat_as_char && matches!(p.common.text_wrap, crate::model::shape::TextWrap::Square) {
-                                    &p.common
-                                } else { continue; }
-                            } else { continue; }
-                        }
-                        _ => continue,
-                    };
-                    let pic_h_px = hwpunit_to_px(cm.height as i32, self.dpi);
-                    let v_off_px = hwpunit_to_px(cm.vertical_offset as i32, self.dpi);
-                    // Paper/Page-relative: vertical_offset이 용지 상단 기준 → y_offset(페이지 기준)과 동일 좌표계
-                    // Para-relative: 앵커 문단의 실제 y_offset에 v_off를 더해야 하나, 동적 계산이 필요하여 현재는 미지원
-                    wrap_pic_bottom_y = if matches!(cm.vert_rel_to, crate::model::shape::VertRelTo::Para) {
-                        0.0  // Para-relative: 이 경로는 현재 hwp3에서 사용되지 않음
-                    } else {
-                        v_off_px + pic_h_px  // Paper/Page-relative: 페이지 상단 기준 절대 y
-                    };
-                    break;
-                }
-            }
-        }
-
         // vpos 보정을 위한 페이지 기준 vpos 계산
         // 페이지 첫 항목의 vpos를 기준점으로 삼아 모든 페이지에서 vpos 보정 적용
         let mut vpos_page_base: Option<i32> = col_content.items.first().and_then(|item| {
@@ -1582,24 +1542,6 @@ impl LayoutEngine {
                         y_offset = table_bottom;
                     }
                     fix_overlay_active = false;
-                }
-            }
-
-            // Square wrap 그림 어울림: 앵커 Shape 처리 후 첫 번째 일반 문단을 그림 하단으로 밀어냄.
-            // 앵커 Shape를 만나면 플래그를 설정하고, 그 이후 처음 나오는 일반 문단에서 y_offset 보정.
-            if let PageItem::Shape { para_index, .. } = item {
-                if wrap_anchor_pi == Some(*para_index) {
-                    wrap_anchor_shape_seen = true;
-                }
-            }
-            if wrap_pic_bottom_y > 0.0 && wrap_anchor_shape_seen {
-                if let PageItem::FullParagraph { para_index } | PageItem::PartialParagraph { para_index, .. } = item {
-                    if !wrap_around_set.contains(para_index) {
-                        if y_offset < wrap_pic_bottom_y {
-                            y_offset = wrap_pic_bottom_y;
-                        }
-                        wrap_pic_bottom_y = 0.0; // 한 번만 적용
-                    }
                 }
             }
 
