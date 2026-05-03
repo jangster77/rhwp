@@ -449,19 +449,23 @@ impl LayoutEngine {
         // body_area보다 큰 콘텐츠(표 외곽 테두리 등)가 잘리지 않도록 함
         if self.clip_enabled.get() {
             let mut clip = body_bbox;
+            // 텍스트 줄/런은 우측 확장 제외: 오버플로 텍스트가 clip을 확장하지 않도록.
+            // 표·선·사각형 등 비텍스트 노드는 우측으로도 확장 허용 (표 테두리 등).
             fn expand_clip(clip: &mut BoundingBox, node: &RenderNode) {
                 let cb = &node.bbox;
                 let child_bottom = cb.y + cb.height;
                 let child_right = cb.x + cb.width;
                 let clip_bottom = clip.y + clip.height;
                 let clip_right = clip.x + clip.width;
+                let is_text = matches!(node.node_type,
+                    RenderNodeType::TextLine(_) | RenderNodeType::TextRun(_));
                 if child_bottom > clip_bottom {
                     clip.height = child_bottom - clip.y;
                 }
-                if child_right > clip_right {
+                if !is_text && child_right > clip_right {
                     clip.width = child_right - clip.x;
                 }
-                if cb.x < clip.x {
+                if !is_text && cb.x < clip.x {
                     clip.width += clip.x - cb.x;
                     clip.x = cb.x;
                 }
@@ -1542,6 +1546,16 @@ impl LayoutEngine {
                         y_offset = table_bottom;
                     }
                     fix_overlay_active = false;
+                }
+            }
+
+            // v_push_before: Fix C Pattern B에서 앵커 이미지 아래로 보조 wpc 문단을 밀기 위해
+            // 파서가 설정한 수직 오프셋(HWPUNIT). layout 기준 y_offset에 픽셀 변환 후 가산.
+            if let PageItem::FullParagraph { para_index } | PageItem::PartialParagraph { para_index, .. } = item {
+                if let Some(para) = paragraphs.get(*para_index) {
+                    if para.v_push_before > 0 {
+                        y_offset += hwpunit_to_px(para.v_push_before, self.dpi);
+                    }
                 }
             }
 
@@ -2952,8 +2966,11 @@ impl LayoutEngine {
                             }
                             // Picture Square wrap (어울림 그림): TABLE wrap과 동일하게
                             // layout_wrap_around_paras를 호출하여 텍스트를 그림 옆에 배치.
+                            // wrap_precomputed=true: 파서가 LineSeg cs/sw를 사전 계산한 문단.
+                            // FullParagraph path가 이미 올바르게 렌더링했으므로 재렌더링 스킵.
                             if !pic.common.treat_as_char
                                 && matches!(pic.common.text_wrap, crate::model::shape::TextWrap::Square)
+                                && !para.wrap_precomputed
                             {
                                 let wrap_cs = para.line_segs.first().map(|s| s.column_start).unwrap_or(0);
                                 let wrap_sw = para.line_segs.first().map(|s| s.segment_width).unwrap_or(0);
@@ -3357,8 +3374,12 @@ impl LayoutEngine {
             // typeset.rs 경로에서 PaginationResult.wrap_around_paras는 항상 비어있으므로
             // col_content.wrap_around_paras를 직접 사용해야 함.
             // 용지 기준(page-relative) 그림도 어울림 텍스트는 body 기준 좌표로 렌더링.
+            // wrap_precomputed=true: 파서가 LineSeg cs/sw를 사전 계산한 앵커 문단.
+            // FullParagraph path 가 이미 렌더링했으므로 재렌더링 스킵.
             {
-                let (opt_cm, opt_pic_h) = if let Some(ctrl) = paragraphs.get(para_index)
+                let anchor_para = paragraphs.get(para_index);
+                let is_precomputed = anchor_para.map(|p| p.wrap_precomputed).unwrap_or(false);
+                let (opt_cm, opt_pic_h) = if let Some(ctrl) = anchor_para
                     .and_then(|p| p.controls.get(control_index))
                 {
                     match ctrl {
@@ -3376,8 +3397,11 @@ impl LayoutEngine {
                     }
                 } else { (None, 0.0) };
                 if let Some(cm) = opt_cm {
-                    if !cm.treat_as_char && matches!(cm.text_wrap, crate::model::shape::TextWrap::Square) {
-                        let wrap_cs = paragraphs.get(para_index)
+                    if !cm.treat_as_char
+                        && matches!(cm.text_wrap, crate::model::shape::TextWrap::Square)
+                        && !is_precomputed
+                    {
+                        let wrap_cs = anchor_para
                             .and_then(|p| p.line_segs.first())
                             .map(|s| s.column_start)
                             .unwrap_or(0);

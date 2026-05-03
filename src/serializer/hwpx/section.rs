@@ -618,6 +618,7 @@ mod tests {
             column_start: 100,
             segment_width: 50000,
             tag: 999,
+            promoted_cps: 0,
         });
         let (doc, section) = make_doc_with_paragraph(para);
         let ctx = SerializeContext::collect_from_document(&doc);
@@ -643,6 +644,7 @@ mod tests {
                 column_start: 0,
                 segment_width: 42520,
                 tag: 393216,
+                promoted_cps: 0,
             });
         }
         let (doc, section) = make_doc_with_paragraph(para);
@@ -684,6 +686,7 @@ mod tests {
             column_start: 0,
             segment_width: 40000,
             tag: 0,
+            promoted_cps: 0,
         });
         let (doc, section) = make_doc_with_paragraph(para);
         let ctx = SerializeContext::collect_from_document(&doc);

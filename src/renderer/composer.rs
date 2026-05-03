@@ -286,8 +286,79 @@ fn compose_lines(para: &Paragraph) -> Vec<ComposedLine> {
 
     let mut lines = Vec::new();
 
+    // HWP3 wrap_precomputed: 대형 span 분리를 위한 기준 글자 수(정상 스팬 중간값).
+    // HWP3는 글자 모양이 바뀌지 않는 연속 줄을 단일 LineSeg로 저장하므로
+    // span이 정상 줄당 글자 수의 1.5배를 초과하면 여러 ComposedLine으로 분리한다.
+    let wrap_ref_span: usize = if para.wrap_precomputed {
+        let total_utf16 = if para.char_count > 0 {
+            para.char_count
+        } else {
+            para.text.encode_utf16().count() as u32
+        };
+        let mut normal: Vec<usize> = Vec::new();
+        for i in 0..para.line_segs.len() {
+            let ls = &para.line_segs[i];
+            if ls.segment_width == 0 || ls.text_height == 0 { continue; }
+            let ts_end = para.line_segs.get(i + 1)
+                .map(|s| s.text_start)
+                .unwrap_or(total_utf16);
+            let span = ts_end.saturating_sub(ls.text_start) as usize;
+            // sw/th * 1.5 이하인 스팬을 "정상"으로 분류
+            let cps_est = ((ls.segment_width / ls.text_height) * 3 / 2).max(1) as usize;
+            if span > 0 && span <= cps_est {
+                normal.push(span);
+            }
+        }
+        if normal.is_empty() {
+            0
+        } else {
+            normal.sort_unstable();
+            // 90th 퍼센타일: 정상 스팬 중 가장 큰 편에 가까운 값 → 과분리 최소화
+            normal[normal.len() * 9 / 10]
+        }
+    } else {
+        0
+    };
+
+    // HWP3 wrap_precomputed: 그림 wrap zone 높이 계산.
+    // wrap zone 높이 = 단락 내 non-TAC 그림의 current_height + 바깥여백(상+하).
+    // 이 높이를 초과하는 LineSeg는 전체 폭(cs=0, sw=full_body_w)으로 전환.
+    let (wrap_zone_h, full_body_w) = if para.wrap_precomputed {
+        let img_h = para.controls.iter()
+            .filter_map(|c| {
+                if let Control::Picture(p) = c {
+                    if !p.common.treat_as_char {
+                        // 바깥여백은 제외: wrap zone 전환 기준은 그림 높이만 사용
+                        let h = p.shape_attr.current_height as i32;
+                        Some(h)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+            .next()
+            .unwrap_or(0);
+        let body_w = para.line_segs.first()
+            .map(|ls| ls.column_start + ls.segment_width)
+            .unwrap_or(0);
+        if img_h > 0 { (img_h, body_w) } else { (0, 0) }
+    } else {
+        (0, 0)
+    };
+    let mut accumulated_lh: i32 = 0;
+
     for line_idx in 0..para.line_segs.len() {
         let line_seg = &para.line_segs[line_idx];
+
+        // wrap zone 초과 여부: 이 LineSeg가 그림 wrap zone 아래에 위치하는지 판정.
+        // 초과 시 paragraph_layout의 sw < col_w-200 조건이 불충족되어 전체 폭으로 렌더링됨.
+        let is_below_wrap = wrap_zone_h > 0
+            && full_body_w > 0
+            && accumulated_lh + line_seg.line_height > wrap_zone_h;
+        let effective_cs = if is_below_wrap { 0 } else { line_seg.column_start };
+        let effective_sw = if is_below_wrap { full_body_w } else { line_seg.segment_width };
 
         // UTF-16 위치 기반으로 이 줄의 텍스트 범위 계산
         let utf16_start = line_seg.text_start;
@@ -384,11 +455,6 @@ fn compose_lines(para: &Paragraph) -> Vec<ComposedLine> {
                 line_text
             };
 
-            let runs = split_by_char_shapes(
-                &line_text, text_start, text_end,
-                &para.char_offsets, &para.char_shapes,
-            );
-
             // TAC 표 문단: lh에 표 높이가 포함된 텍스트 줄은 th로 보정 (Task #19)
             let corrected_lh = if has_tac
                 && line_seg.text_height > 0
@@ -399,17 +465,69 @@ fn compose_lines(para: &Paragraph) -> Vec<ComposedLine> {
                 line_seg.line_height
             };
 
-            lines.push(ComposedLine {
-                runs,
-                line_height: corrected_lh,
-                baseline_distance: line_seg.baseline_distance,
-                segment_width: line_seg.segment_width,
-                column_start: line_seg.column_start,
-                line_spacing: line_seg.line_spacing,
-                has_line_break,
-                char_start: text_start,
-            });
+            // HWP3 wrap_precomputed: LineSeg가 여러 표시 줄을 하나로 묶은 경우 분리.
+            // wrap zone 내: wrap_ref_span 기준. wrap zone 초과(전체 폭): sw/th 기준.
+            let span_len = text_end - text_start;
+            let sub_line_chars = {
+                let cps = if is_below_wrap && effective_sw > 0 && line_seg.text_height > 0 {
+                    // 단락 내 wrap zone 초과 줄: 전체 폭 기준 cps
+                    (effective_sw / line_seg.text_height).max(1) as usize
+                } else if line_seg.promoted_cps > 0 {
+                    // Fix C 승격 ls: mod.rs에서 narrow→full 비례 계산된 cps 사용
+                    line_seg.promoted_cps as usize
+                } else if wrap_ref_span > 0 {
+                    wrap_ref_span
+                } else {
+                    0
+                };
+                if cps > 0 && effective_sw > 0 && span_len > cps * 3 / 2 {
+                    Some(cps)
+                } else {
+                    None
+                }
+            };
+
+            if let Some(cps) = sub_line_chars {
+                // 대형 span을 cps 글자씩 sub-ComposedLine으로 분리
+                let mut offset = text_start;
+                while offset < text_end {
+                    let sub_end = (offset + cps).min(text_end);
+                    let is_last = sub_end == text_end;
+                    let sub_text: String = para.text.chars().skip(offset).take(sub_end - offset).collect();
+                    let sub_runs = split_by_char_shapes(
+                        &sub_text, offset, sub_end,
+                        &para.char_offsets, &para.char_shapes,
+                    );
+                    lines.push(ComposedLine {
+                        runs: sub_runs,
+                        line_height: corrected_lh,
+                        baseline_distance: line_seg.baseline_distance,
+                        segment_width: effective_sw,
+                        column_start: effective_cs,
+                        line_spacing: line_seg.line_spacing,
+                        has_line_break: is_last && has_line_break,
+                        char_start: offset,
+                    });
+                    offset = sub_end;
+                }
+            } else {
+                let runs = split_by_char_shapes(
+                    &line_text, text_start, text_end,
+                    &para.char_offsets, &para.char_shapes,
+                );
+                lines.push(ComposedLine {
+                    runs,
+                    line_height: corrected_lh,
+                    baseline_distance: line_seg.baseline_distance,
+                    segment_width: effective_sw,
+                    column_start: effective_cs,
+                    line_spacing: line_seg.line_spacing,
+                    has_line_break,
+                    char_start: text_start,
+                });
+            }
         }
+        accumulated_lh += line_seg.line_height;
     }
 
     lines

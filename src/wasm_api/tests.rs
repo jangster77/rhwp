@@ -8981,6 +8981,7 @@
                 column_start: 0,
                 segment_width: cell_seg_width,
                 tag: 0x00060000,
+                promoted_cps: 0,
             }],
             has_para_text: false,    // 빈 문단: PARA_TEXT 없음
             raw_header_extra: vec![0x01,0x00,0x00,0x00, 0x01,0x00, 0x00,0x00,0x00,0x00],
@@ -9093,6 +9094,7 @@
                 column_start: 0,
                 segment_width: 42520, // 참조: 편집 영역 전체 너비
                 tag: 0x00060000,
+                promoted_cps: 0,
             }],
             has_para_text: false,
             raw_header_extra: vec![0x01,0x00,0x00,0x00, 0x01,0x00, 0x00,0x00,0x00,0x00],
@@ -9609,6 +9611,7 @@
                 column_start: 0,
                 segment_width: ref_para.line_segs[0].segment_width, // 참조: 42520
                 tag: ref_para.line_segs[0].tag, // 참조: 0x00060000
+                promoted_cps: 0,
             }],
             has_para_text: true,
             controls: new_controls,
@@ -10426,6 +10429,7 @@
                 column_start: ref_cell_para.line_segs[0].column_start,
                 segment_width: ref_cell_para.line_segs[0].segment_width, // 40932
                 tag: ref_cell_para.line_segs[0].tag,
+                promoted_cps: 0,
             }],
             has_para_text: true,  // gso 제어문자 있으므로 PARA_TEXT 필요
             controls: vec![Control::Picture(Box::new(picture))],
@@ -10512,6 +10516,7 @@
                 column_start: ref_para1.line_segs[0].column_start,
                 segment_width: ref_para1.line_segs[0].segment_width,
                 tag: ref_para1.line_segs[0].tag,
+                promoted_cps: 0,
             }],
             has_para_text: false,
             raw_header_extra: ref_para1.raw_header_extra.clone(),

@@ -434,6 +434,7 @@ fn parse_para_line_seg(data: &[u8]) -> Vec<LineSeg> {
             column_start: r.read_i32().unwrap_or(0),
             segment_width: r.read_i32().unwrap_or(0),
             tag: r.read_u32().unwrap_or(0),
+            promoted_cps: 0,
         });
     }
 

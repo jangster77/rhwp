@@ -23,6 +23,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **HWP3 파서 규칙**: `src/parser/hwp3/` 내부에서 HWP3 바이너리를 읽어 `Document` IR로 변환하여 반환한다. HWP3 전용 로직은 **반드시 `src/parser/hwp3/` 안에서만** 구현한다. 렌더러(`src/renderer/`), 레이아웃(`src/renderer/layout.rs`), 문서 코어(`src/document_core/`) 등 공통 모듈에 HWP3 전용 분기를 추가하지 않는다.
 
+> **예외 — 일반 렌더러 버그**: HWP3 파일을 통해 발견된 버그라도 수정이 모든 포맷(HWP3/HWP5/HWPX)에 동일하게 적용되고 HWP3 전용 분기(`if doc.header.version.major == 3` 등)가 없으면 공통 렌더러에서 수정한다. HWP3-only 재현이지만 로직 자체는 포맷 무관인 경우가 이에 해당한다.
+
 ## 클로드 코드 사용 시 주의사항
 
 이 프로젝트는 **하이퍼-워터폴** 방법론을 적용한다. 클로드 코드의 기본 동작(빠른 실행, 자율 수정)과 충돌이 발생할 수 있으므로 반드시 숙지한다.

@@ -730,6 +730,7 @@ mod tests {
                 column_start: 0,
                 segment_width: 42000,
                 tag: 0x01,
+                promoted_cps: 0,
             }],
             ..Default::default()
         };

@@ -874,6 +874,23 @@ impl LayoutEngine {
                     text_y + line_height, col_bottom, text_y + line_height - col_bottom,
                 );
             }
+            // wrap_precomputed: 파서가 LineSeg cs/sw를 사전 계산한 문단 중
+            // Task#489(그림 있는 문단)에서 처리하지 못한 그림 없는 wrap 문단에 적용.
+            // ComposedLine.column_start/segment_width를 직접 사용: compose 단계에서 LineSeg가
+            // 분리되어 line_idx가 line_segs 인덱스와 일치하지 않는 경우에도 올바르게 동작.
+            let (line_cs_offset, line_avail_w_override) = if !has_picture_shape_square_wrap
+                && para.map(|p| p.wrap_precomputed).unwrap_or(false)
+                && comp_line.segment_width > 0
+            {
+                let cs = comp_line.column_start;
+                let sw = comp_line.segment_width;
+                let cs_px = crate::renderer::hwpunit_to_px(cs, self.dpi);
+                let sw_px = Some(crate::renderer::hwpunit_to_px(sw, self.dpi));
+                (cs_px, sw_px)
+            } else {
+                (0.0, None)
+            };
+
             let line_id = tree.next_id();
             let mut line_node = RenderNode::new(
                 line_id,
@@ -882,9 +899,9 @@ impl LayoutEngine {
                     TextLineNode::with_para_vpos(line_height, baseline, section_index, para_index, line_idx as u32, vpos)
                 }),
                 BoundingBox::new(
-                    effective_col_x + effective_margin_left,
+                    (if line_cs_offset > 0.0 { col_area.x + line_cs_offset } else { effective_col_x }) + effective_margin_left,
                     text_y,
-                    effective_col_w - effective_margin_left - margin_right,
+                    line_avail_w_override.unwrap_or(effective_col_w - effective_margin_left - margin_right),
                     line_height,
                 ),
             );
@@ -892,12 +909,14 @@ impl LayoutEngine {
             let inline_offset = if line_idx == start_line { first_line_x_offset } else { 0.0 };
             // 번호/글머리표 마커: 모든 줄에서 마커 폭만큼 가용폭 차감 (행잉 인덴트)
             let num_offset = if numbering_width > 0.0 { numbering_width } else { 0.0 };
-            let available_width = effective_col_w - effective_margin_left - margin_right - inline_offset - num_offset;
-
+            let available_width = line_avail_w_override
+                .unwrap_or(effective_col_w)
+                - effective_margin_left - margin_right - inline_offset - num_offset;
 
             // 텍스트 정렬을 위한 전체 줄 폭 계산 (자연 폭, 추가 간격 미포함)
             // treat_as_char 이미지 폭도 포함하여 정확한 폭 산출
-            let mut est_x = effective_margin_left + inline_offset;
+            // wrap_precomputed: line_cs_offset을 est_x 기준점에 포함 (line_x_offset은 col_area.x 기준 상대좌표)
+            let mut est_x = effective_margin_left + line_cs_offset + inline_offset;
             let est_x_start = est_x;
             let mut pending_right_tab_est: Option<(f64, u8, u8)> = None;
             let mut run_char_pos_est = comp_line.char_start;
@@ -1197,17 +1216,18 @@ impl LayoutEngine {
             let num_x_offset = if num_offset > 0.0 && !(line_idx == start_line && start_line == 0) {
                 num_offset
             } else { 0.0 };
+            let base_col_x = if line_cs_offset > 0.0 { col_area.x + line_cs_offset } else { effective_col_x };
             let x_start = match alignment {
                 Alignment::Center => {
-                    effective_col_x + effective_margin_left + inline_offset + num_x_offset + (available_width - effective_text_width).max(0.0) / 2.0
+                    base_col_x + effective_margin_left + inline_offset + num_x_offset + (available_width - effective_text_width).max(0.0) / 2.0
                 }
                 Alignment::Distribute if !needs_distribute || total_char_count <= 1 => {
-                    effective_col_x + effective_margin_left + inline_offset + num_x_offset + (available_width - effective_text_width).max(0.0) / 2.0
+                    base_col_x + effective_margin_left + inline_offset + num_x_offset + (available_width - effective_text_width).max(0.0) / 2.0
                 }
                 Alignment::Right => {
-                    effective_col_x + effective_margin_left + inline_offset + num_x_offset + (available_width - effective_text_width).max(0.0)
+                    base_col_x + effective_margin_left + inline_offset + num_x_offset + (available_width - effective_text_width).max(0.0)
                 }
-                _ => effective_col_x + effective_margin_left + inline_offset + num_x_offset, // Left, Justify, Split, Distribute(분배중)
+                _ => base_col_x + effective_margin_left + inline_offset + num_x_offset, // Left, Justify, Split, Distribute(분배중)
             };
 
             // TextRun 노드 생성

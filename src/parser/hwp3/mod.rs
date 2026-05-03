@@ -835,9 +835,6 @@ pub(crate) fn parse_paragraph_list(
                                 let mut pic_name = crate::parser::hwp3::encoding::decode_hwp3_string(pic_name_buf);
                                 pic_name = pic_name.trim_end_matches('\0').to_string();
                                 
-                                let _block_num = (&info_buf[62..64]).read_u16::<LittleEndian>().unwrap_or(0);
-                                let _pic_info_size = (&info_buf[58..62]).read_u32::<LittleEndian>().unwrap_or(0);
-                                
                                 if !pic_name.is_empty() {
                                     let next_id = (pic_name_to_id.len() + 1) as u16;
                                     let id = *pic_name_to_id.entry(pic_name).or_insert(next_id);
@@ -1286,6 +1283,7 @@ pub(crate) fn parse_paragraph_list(
                     }
 
                     // 그림 위치에 따라 텍스트 흐름 방향 결정
+                    // cs/sw는 pgy_start/pgy_end 계산용 폴백값. 실제 줄별 cs는 linfo.sx로 대체.
                     let (cs, sw) = if pic_left_col < column_width_hu / 2 {
                         // 왼쪽 배치: 텍스트가 오른쪽으로 흐름
                         let cs = pic_right_col.max(0);
@@ -1399,23 +1397,69 @@ pub(crate) fn parse_paragraph_list(
                 // 앵커 문단(pic_wrap_zone.is_some()): 자신이 그림 호스트이므로 pgy 무관하게 적용.
                 // 후속 문단: pgy가 구역 안에 있을 때만 적용.
                 let line_cs_sw = current_zone.and_then(|(cs, sw, pgy_start, pgy_end)| {
-                    if pic_wrap_zone.is_some() || (linfo.pgy >= pgy_start && linfo.pgy < pgy_end) {
-                        Some((cs, sw))
+                    if linfo.sx > 0 {
+                        // sx > 0: binary 값 무조건 신뢰 (pgy zone 체크 불필요).
+                        // HWP3 엔진이 정확한 x를 저장했으므로 pgy 비교는 필요 없다.
+                        // (linfo.pgy가 pgy_start보다 작더라도 sx>0이면 wrap zone에 배치됨)
+                        let cs_sx = (linfo.sx as i32) * 4;
+                        let sw_sx = (column_width_hu - cs_sx).max(0);
+                        Some((cs_sx, sw_sx))
                     } else {
-                        None
+                        // sx=0: pgy zone 체크 후 geometry 폴백.
+                        let in_zone = pic_wrap_zone.is_some()
+                            || (linfo.pgy >= pgy_start && linfo.pgy < pgy_end);
+                        if !in_zone { return None; }
+                        // geometry 폴백: 앵커 문단 & 비앵커 문단 모두 동일 처리.
+                        Some((cs, sw))
                     }
                 });
 
+                // cs=0 줄이 그림 y 범위 내에 있으면 그림 하단까지의 거리를 문단 시작 기준
+                // 상대값(HWPUNIT)으로 기록한다.
+                // paragraph_layout.rs: y = y.max(y_start + vpos_px) 로 y 진행.
+                // height_measurer.rs: acc = acc.max(vpos_px) 로 높이 계산.
+                let vertical_pos = if line_cs_sw.is_none() {
+                    if linfo.sx == 0 && pic_wrap_zone.is_none() {
+                        // 비앵커 문단에서 binary sx=0: HWP97이 이 줄을 full-width로 배치.
+                        // 기하학적 pgy_end(추정값)가 실제 어울림 구역보다 크면 zone 내로
+                        // 오판하여 vpos>0을 부여한다. binary를 신뢰하여 vpos=0 고정.
+                        0
+                    } else {
+                        current_zone.and_then(|(_, _, pgy_start, pgy_end)| {
+                            if linfo.pgy >= pgy_start && linfo.pgy < pgy_end {
+                                // 기준점 = max(이미지 상단, 문단 첫 줄 pgy)
+                                // - 이미지 상단보다 아래에서 시작하는 문단은 first_pgy_here 사용
+                                // - 용지 여백에 걸친 첫 줄(first_pgy_here < pgy_start)은 pgy_start 클램프
+                                let ref_pgy = (first_pgy_here as i32).max(pgy_start as i32);
+                                let rel_hu = ((pgy_end as i32) - ref_pgy).max(0) * 4;
+                                Some(rel_hu)
+                            } else {
+                                None
+                            }
+                        }).unwrap_or(0)
+                    }
+                } else {
+                    0
+                };
+
+                // HWP3 앵커 문단 첫 줄: 한컴뷰어는 binary cs를 무시하고 본문 왼쪽(cs=0)에서 시작.
+                // sw=0으로 layout.rs의 layout_wrap_around_paras guard(wrap_cs>0||wrap_sw>0)도 우회.
+                let (final_cs, final_sw) = if pic_wrap_zone.is_some() && line_segs.is_empty() {
+                    (0i32, 0i32)
+                } else {
+                    (line_cs_sw.map(|(cs, _)| cs).unwrap_or(0), line_cs_sw.map(|(_, sw)| sw).unwrap_or(0))
+                };
                 line_segs.push(LineSeg {
                     text_start,
-                    vertical_pos: 0,
+                    vertical_pos,
                     line_height: lh,
                     text_height: th,
                     baseline_distance: bl,
                     line_spacing: ls,
-                    column_start: line_cs_sw.map(|(cs, _)| cs).unwrap_or(0),
-                    segment_width: line_cs_sw.map(|(_, sw)| sw).unwrap_or(0),
+                    column_start: final_cs,
+                    segment_width: final_sw,
                     tag,
+                    promoted_cps: 0,
                 });
             }
         }
@@ -1470,7 +1514,6 @@ pub(crate) fn parse_paragraph_list(
         } else {
             para.line_segs = line_segs;
         }
-
         // TAC 표 문단: 줄간격 배율 미적용 — lh=th (표 높이 그대로, line spacing은 내용 텍스트에만 적용)
         {
             let has_tac_table = para.controls.iter().any(|c| {
@@ -1551,6 +1594,450 @@ pub(crate) fn parse_paragraph_list(
         prev_para_had_flags_break = para_info.flags & 0x02 != 0;
 
         paragraphs.push(para);
+    }
+
+    // LineSeg cs/sw가 사전 계산된 wrap zone 문단 표시.
+    // 패턴A/B (multi-LineSeg): 모두 vertical_pos=0 + 하나 이상 column_start>0
+    // 패턴C (single-LineSeg): column_start>0 + segment_width>0 + tac=false 그림 없음
+    //   → 그림 옆 wrap zone의 짧은 문단(예: "$ mount /dev/hda3 /usr")
+    for para in &mut paragraphs {
+        let has_floating_picture = para.controls.iter().any(|c| {
+            matches!(c, crate::model::control::Control::Picture(p) if !p.common.treat_as_char)
+        });
+        if para.line_segs.len() > 1
+            && para.line_segs.iter().all(|s| s.column_start == 0 || s.vertical_pos == 0)
+            && para.line_segs.iter().any(|s| s.column_start > 0)
+        {
+            para.wrap_precomputed = true;
+        }
+        if para.line_segs.len() == 1
+            && para.line_segs[0].column_start > 0
+            && para.line_segs[0].segment_width > 0
+            && (!has_floating_picture
+                || para.column_type == crate::model::paragraph::ColumnBreakType::Page)
+        {
+            // tac=false 그림 없음: 항상 wrap zone
+            // tac=false 그림 있음: 페이지 첫 문단일 때만 적용
+            //   (예: pi=599 "9 AIX bootable..." - 그림과 텍스트가 동일 y에서 시작)
+            //   (반례: pi=779/440 - 그림이 텍스트 y보다 아래에 있으므로 제외)
+            para.wrap_precomputed = true;
+        }
+    }
+
+    // Fix 2: HWP3 어울림(Square wrap) stretch LINE_SEG lh 교정
+    // HWP3은 wrap zone의 마지막 줄(또는 유일 줄)의 lh를 그림 하단까지 늘려 저장한다.
+    // multi-LineSeg: 최빈 lh × 2 초과 줄 → 최빈 lh로 교정
+    // single-LineSeg: lh > round(th × 1.6) × 2 → 정규 lh로 교정
+    // TopAndBottom(위아래) 그림은 제외(pushdown_h 경로로 별도 처리됨)
+    for para in &mut paragraphs {
+        let has_square_wrap_pic = para.controls.iter().any(|c| {
+            match c {
+                crate::model::control::Control::Picture(p) =>
+                    !p.common.treat_as_char && matches!(p.common.text_wrap, crate::model::shape::TextWrap::Square),
+                crate::model::control::Control::Shape(s) => {
+                    if let crate::model::shape::ShapeObject::Picture(p) = s.as_ref() {
+                        !p.common.treat_as_char && matches!(p.common.text_wrap, crate::model::shape::TextWrap::Square)
+                    } else { false }
+                }
+                _ => false,
+            }
+        });
+        if !has_square_wrap_pic || para.line_segs.is_empty() {
+            continue;
+        }
+        if para.line_segs.len() >= 2 {
+            // multi-line: 최빈 lh 계산 후 2배 초과 줄 교정
+            let mut lh_counts: std::collections::HashMap<i32, usize> = Default::default();
+            for seg in &para.line_segs {
+                *lh_counts.entry(seg.line_height).or_default() += 1;
+            }
+            if let Some(mode_lh) = lh_counts.into_iter().max_by_key(|&(_, c)| c).map(|(lh, _)| lh) {
+                if mode_lh > 0 {
+                    for seg in &mut para.line_segs {
+                        if seg.line_height > mode_lh * 2 {
+                            seg.line_height = mode_lh;
+                        }
+                    }
+                }
+            }
+        } else {
+            // single-line: th 기반 정규 lh 추정
+            let seg = &mut para.line_segs[0];
+            let th = seg.text_height;
+            if th > 0 {
+                let normal_lh = (th * 8 + 2) / 5; // round(th × 1.6)
+                if seg.line_height > normal_lh * 2 {
+                    seg.line_height = normal_lh;
+                }
+            }
+        }
+    }
+
+    // 그림 전용 문단 높이 보정: 텍스트가 그림 마커("￼")만 있는 1-LineSeg 문단에서
+    // tac=false 그림이 있고 다음 문단이 wrap_precomputed가 아닌 경우,
+    // LineSeg lh를 그림 높이로 설정하여 후속 문단이 그림 아래에서 시작하도록 한다.
+    // (다음 문단이 wrap_precomputed인 경우는 그림 옆에 텍스트가 배치되는 패턴이므로 변경하지 않음)
+    let n = paragraphs.len();
+    for i in 0..n {
+        if paragraphs[i].line_segs.len() != 1 {
+            continue;
+        }
+        if !paragraphs[i].text.chars().all(|c| c == '\u{FFFC}') {
+            continue;
+        }
+        if i + 1 < n && paragraphs[i + 1].wrap_precomputed {
+            // 보완10 Fix A: 앵커 문단(pgy=0, 용지 상단 여백)은 본문 높이에 기여하지 않는다.
+            // text/line_segs를 비워 height=0으로 만들고, controls는 유지(그림 렌더링용).
+            let has_floating_sq = paragraphs[i].controls.iter().any(|c| {
+                matches!(c, crate::model::control::Control::Picture(p)
+                    if !p.common.treat_as_char
+                        && matches!(p.common.text_wrap, crate::model::shape::TextWrap::Square))
+            });
+            if has_floating_sq {
+                paragraphs[i].text.clear();
+                paragraphs[i].line_segs.clear();
+                // Task#489 경로 활성화: floating square-wrap 그림을 wrap 텍스트 문단(i+1)으로
+                // 이동하여 has_picture_shape_square_wrap=true가 성립하도록 한다.
+                // 그림 위치는 절대좌표(vert_offset/horz_offset)로 결정되므로 이동해도 렌더 위치 불변.
+                let mut moved: Vec<crate::model::control::Control> = Vec::new();
+                let mut remaining: Vec<crate::model::control::Control> = Vec::new();
+                for ctrl in paragraphs[i].controls.drain(..) {
+                    if matches!(&ctrl, crate::model::control::Control::Picture(p) if !p.common.treat_as_char) {
+                        moved.push(ctrl);
+                    } else {
+                        remaining.push(ctrl);
+                    }
+                }
+                paragraphs[i].controls = remaining;
+                if !moved.is_empty() {
+                    let mut new_ctrl = moved;
+                    new_ctrl.append(&mut paragraphs[i + 1].controls);
+                    paragraphs[i + 1].controls = new_ctrl;
+                }
+            }
+            continue;
+        }
+        let pic_height = paragraphs[i].controls.iter().find_map(|ctrl| {
+            if let crate::model::control::Control::Picture(p) = ctrl {
+                if !p.common.treat_as_char
+                    && !matches!(p.common.text_wrap, crate::model::shape::TextWrap::Square)
+                {
+                    return Some(p.common.height as i32);
+                }
+            }
+            None
+        });
+        if let Some(h) = pic_height {
+            if h > paragraphs[i].line_segs[0].line_height {
+                paragraphs[i].line_segs[0].line_height = h;
+            }
+        }
+    }
+
+    // 보완10 Fix B: wrap_precomputed 문단의 cs=0 && vpos>0 줄(용지 여백 내) 제거 +
+    // vpos=0인 cs=0 줄 → 첫 번째 cs>0 줄의 cs/sw로 상향 조정.
+    //
+    // vpos>0: 그림 y 범위 내, sx=0 줄 → 한컴에서 본문 클립 밖(용지 여백)에 렌더링됨 → 불가시 → 제거.
+    // vpos=0인 cs=0 줄: 그림 y 범위 밖(그림 위) 전폭 줄.
+    //   HWP3 저장 레이아웃에서는 그림 위에 전폭으로 렌더되었으나, 한컴 재흐름 시
+    //   동일 wrap zone에 배치된다. cs>0 줄과 동일한 cs/sw로 상향하여 wrap zone에 포함.
+    for para in paragraphs.iter_mut() {
+        if !para.wrap_precomputed {
+            continue;
+        }
+        // 앵커 문단(자신이 floating Square-wrap 그림 보유)은 binary 레이아웃 신뢰:
+        // cs=0 줄(그림 위)과 cs>0 줄(그림 옆)이 올바르게 저장되어 있으므로 수정하지 않는다.
+        let is_anchor = para.controls.iter().any(|c| {
+            matches!(c, crate::model::control::Control::Picture(p)
+                if !p.common.treat_as_char
+                    && matches!(p.common.text_wrap, crate::model::shape::TextWrap::Square))
+        });
+        if is_anchor {
+            continue;
+        }
+        // 1단계: vpos>0 줄 제거 (용지 여백 내 불가시 줄)
+        para.line_segs.retain(|s| !(s.column_start == 0 && s.vertical_pos > 0));
+        // 2단계: 첫 번째 cs>0 줄 이전의 cs=0 줄만 상향
+        // (이미지 위쪽 전폭 줄 → wrap zone 안으로 편입)
+        // 첫 번째 cs>0 이후의 cs=0 줄은 이미지 하단 이후 → 변경하지 않음.
+        if let Some(first_wrap_idx) = para.line_segs.iter().position(|s| s.column_start > 0) {
+            let (wrap_cs, wrap_sw) = {
+                let s = &para.line_segs[first_wrap_idx];
+                (s.column_start, s.segment_width)
+            };
+            for seg in para.line_segs[..first_wrap_idx].iter_mut() {
+                if seg.column_start == 0 {
+                    seg.column_start = wrap_cs;
+                    seg.segment_width = wrap_sw;
+                }
+            }
+        }
+    }
+
+    // 순수 LineSeg 방식: wrap_precomputed 문단의 마지막 wrap-zone LineSeg lh를
+    // 그림 하단까지 스트레칭하여 height_measurer/paragraph_layout이 특수 처리 없이
+    // 올바른 높이를 계산하도록 한다.
+    // cs=0 줄의 vpos > 0: 그림 하단까지의 HWPUNIT 거리(문단 시작 기준, parse 단계에서 기록).
+    // 스트레칭 후 vpos를 0으로 초기화 → typeset.rs vpos-reset false-break 방지.
+    //
+    // Fix A 후 primary wrap 문단만 floating picture를 보유한다.
+    // secondary 문단(같은 그림 구역 내 후속 wrap 문단)에 lh-stretch를 적용하면
+    // 선행 wrap 문단들이 이미 누적한 높이를 무시하고 과도하게 스트레칭된다 → 적용 제외.
+    // floating square-wrap 그림을 보유한 문단(앵커) 직후의 wrap_precomputed가 primary.
+    // Fix A 경유 시: 그림이 앵커→primary로 이동 → primary 자신이 floating picture 보유.
+    // Fix A 미경유(앵커가 multi-lineseg 등) 시: 그림은 앵커에 남음 → 앵커가 floating picture 보유.
+    // 두 경우 모두 "floating picture를 가진 문단을 만나면 다음 wrap_precomputed가 primary"로 처리.
+    let mut next_wrap_is_primary = true;
+    for para in paragraphs.iter_mut() {
+        // floating square-wrap 그림 보유 여부 확인 (앵커 OR Fix-A-경유 primary 모두 해당)
+        let has_floating_sq = para.controls.iter().any(|c| {
+            matches!(c, crate::model::control::Control::Picture(p)
+                if !p.common.treat_as_char
+                    && matches!(p.common.text_wrap, crate::model::shape::TextWrap::Square))
+        });
+        if has_floating_sq {
+            // 이 문단 이후(또는 이 문단 자체가 wrap_precomputed면 이 문단)가 primary.
+            next_wrap_is_primary = true;
+        }
+
+        if !para.wrap_precomputed {
+            continue;
+        }
+
+        let is_primary = next_wrap_is_primary;
+        next_wrap_is_primary = false; // 이후 연속 wrap 문단은 secondary
+
+        if is_primary {
+            // cs=0 줄 중 vpos > 0: 그림 하단 거리(HWPUNIT) 신호
+            let vpos_signal: i32 = para.line_segs.iter()
+                .filter(|s| s.column_start == 0)
+                .map(|s| s.vertical_pos)
+                .max()
+                .unwrap_or(0);
+
+            if vpos_signal > 0 {
+                // 마지막 wrap-zone 줄(cs > 0) 인덱스
+                if let Some(last_wrap_idx) = para.line_segs.iter().rposition(|s| s.column_start > 0) {
+                    // 선행 줄(last_wrap_idx 이전)의 (lh + spacing) 합계
+                    let preceding_sum: i32 = para.line_segs[..last_wrap_idx].iter()
+                        .map(|s| s.line_height + s.line_spacing)
+                        .sum();
+                    let sp = para.line_segs[last_wrap_idx].line_spacing;
+                    // preceding_sum + stretched_lh + sp = vpos_signal
+                    // → y_start + vpos_signal_px = 그림 하단 절대 y
+                    let stretched = (vpos_signal - preceding_sum - sp)
+                        .max(para.line_segs[last_wrap_idx].line_height);
+                    para.line_segs[last_wrap_idx].line_height = stretched;
+                }
+            }
+        }
+
+        // vpos 초기화: 렌더러가 vpos=0을 보도록 함
+        for seg in &mut para.line_segs {
+            seg.vertical_pos = 0;
+        }
+    }
+
+    // Fix C: cross-paragraph wrap zone 종료 처리.
+    //
+    // 두 가지 패턴:
+    //  (A) wpc primary 자체에 이미지 포함(MOVE 이후): budget = current_height (그림 높이).
+    //      budget 초과 narrow ls → full-width 승격 + promoted_cps 계산.
+    //  (B) non-wpc 앵커에 이미지 + 직후 wpc primary: budget = anchor_total_img_h.
+    //      budget 이내 ls는 narrow 유지, budget 초과 ls → full-width 승격 (소급 없음).
+    {
+        let mut remaining_wrap: Option<i32> = None;
+        let mut next_is_primary = false;
+        let mut anchor_is_non_wpc = false;
+        let mut body_w: i32 = 0;
+        let mut anchor_total_img_h: Option<i32> = None;
+        let mut is_pattern_b = false;
+
+        for para in paragraphs.iter_mut() {
+            // non-TAC Square-wrap 이미지 보유 여부 + 높이 (마진 포함)
+            let img_info: Option<(i32, i32, i32)> = para.controls.iter().find_map(|c| {
+                if let crate::model::control::Control::Picture(p) = c {
+                    if !p.common.treat_as_char
+                        && matches!(p.common.text_wrap, crate::model::shape::TextWrap::Square)
+                    {
+                        Some((
+                            p.shape_attr.current_height as i32,
+                            p.common.margin.top as i32,
+                            p.common.margin.bottom as i32,
+                        ))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            });
+            let img_h = img_info.map(|(h, _, _)| h);
+
+            if img_h.is_some() {
+                next_is_primary = true;
+            }
+
+            if !para.wrap_precomputed {
+                if img_h.is_none() {
+                    remaining_wrap = None;
+                    next_is_primary = false;
+                    anchor_is_non_wpc = false;
+                    anchor_total_img_h = None;
+                    is_pattern_b = false;
+                } else {
+                    anchor_is_non_wpc = true;
+                    if let Some((h, mt, mb)) = img_info {
+                        anchor_total_img_h = Some(h + mt + mb);
+                    }
+                }
+                continue;
+            }
+
+            // wrap_precomputed 문단
+            if next_is_primary {
+                let own_lh: i32 = para.line_segs.iter().map(|s| s.line_height).sum();
+                body_w = para.line_segs.first()
+                    .map(|ls| ls.column_start + ls.segment_width)
+                    .unwrap_or(0);
+                is_pattern_b = anchor_is_non_wpc;
+                let budget = if anchor_is_non_wpc {
+                    anchor_total_img_h.unwrap_or(own_lh)
+                } else {
+                    anchor_total_img_h = None;
+                    img_h.unwrap_or(own_lh)
+                };
+                remaining_wrap = Some(budget);
+                anchor_is_non_wpc = false;
+                next_is_primary = false;
+            }
+
+            if let Some(ref mut remaining) = remaining_wrap {
+                // 앵커 문단(자신이 floating Square-wrap 그림 보유): binary 레이아웃 신뢰.
+                // cs=0/cs>0 줄이 binary에 올바르게 저장되어 있으므로 승격 없이 remaining만 차감.
+                if img_h.is_some() {
+                    for ls in &para.line_segs {
+                        *remaining -= ls.line_height;
+                    }
+                } else if is_pattern_b {
+                    // 패턴B: budget 초과 ls → full-width 승격 (소급 승격 없음).
+                    // budget 이내 ls는 narrow 유지, budget 초과 시 cs=0/sw=body_w 승격.
+                    //
+                    // binary에 이미 cs=0/sw=0 줄이 있으면 HWP97이 narrow/full-width 전환을
+                    // 정확히 저장한 것이므로 binary 신뢰 (promotion/truncation 생략).
+                    let has_binary_fullwidth = para.line_segs.iter()
+                        .any(|ls| ls.column_start == 0 && ls.segment_width == 0);
+                    if has_binary_fullwidth {
+                        // binary 신뢰: remaining만 업데이트, ls 변경 없음.
+                        for ls in &para.line_segs {
+                            *remaining -= ls.line_height;
+                        }
+                    } else {
+                    let narrow_sw = para.line_segs.first()
+                        .map(|ls| ls.segment_width)
+                        .unwrap_or(body_w);
+                    let mut first_promoted: Option<usize> = None;
+                    for (i, ls) in para.line_segs.iter_mut().enumerate() {
+                        if *remaining < ls.line_height {
+                            ls.column_start = 0;
+                            ls.segment_width = body_w;
+                            if first_promoted.is_none() {
+                                first_promoted = Some(i);
+                            }
+                        }
+                        *remaining -= ls.line_height;
+                    }
+                    if let Some(start) = first_promoted {
+                        let th = para.line_segs[start].text_height;
+                        if th > 0 && narrow_sw > 0 && body_w > narrow_sw {
+                            let total_utf16 = if para.char_count > 0 {
+                                para.char_count
+                            } else {
+                                para.text.encode_utf16().count() as u32
+                            };
+                            let orig_cps_est = ((narrow_sw / th) * 3 / 2).max(1) as u32;
+                            let mut normal_spans: Vec<u32> = Vec::new();
+                            for (j, ls) in para.line_segs.iter().enumerate() {
+                                let ts_end = para.line_segs.get(j + 1)
+                                    .map(|s| s.text_start)
+                                    .unwrap_or(total_utf16);
+                                let span = ts_end.saturating_sub(ls.text_start);
+                                if span > 0 && span <= orig_cps_est {
+                                    normal_spans.push(span);
+                                }
+                            }
+                            if !normal_spans.is_empty() {
+                                normal_spans.sort_unstable();
+                                let orig_ref = normal_spans[normal_spans.len() * 9 / 10] as i32;
+                                let scaled_cps = (orig_ref * body_w / narrow_sw).max(1);
+                                para.line_segs[start].promoted_cps = scaled_cps;
+                            }
+                        }
+                        if start + 1 < para.line_segs.len() {
+                            para.line_segs.truncate(start + 1);
+                        }
+                    }
+                    } // end !has_binary_fullwidth
+                } else {
+                    // 패턴A: budget 초과 narrow ls → full-width 승격
+                    let narrow_sw = para.line_segs.first()
+                        .map(|ls| ls.segment_width)
+                        .unwrap_or(body_w);
+                    let mut first_promoted: Option<usize> = None;
+                    for (i, ls) in para.line_segs.iter_mut().enumerate() {
+                        if *remaining < ls.line_height {
+                            ls.column_start = 0;
+                            ls.segment_width = body_w;
+                            if first_promoted.is_none() {
+                                first_promoted = Some(i);
+                            }
+                        }
+                        *remaining -= ls.line_height;
+                    }
+
+                    if let Some(mut start) = first_promoted {
+                        if start > 0 {
+                            for ls in para.line_segs[0..start].iter_mut() {
+                                ls.column_start = 0;
+                                ls.segment_width = body_w;
+                            }
+                            start = 0;
+                        }
+
+                        let th = para.line_segs[start].text_height;
+                        if th > 0 && narrow_sw > 0 && body_w > narrow_sw {
+                            let total_utf16 = if para.char_count > 0 {
+                                para.char_count
+                            } else {
+                                para.text.encode_utf16().count() as u32
+                            };
+                            let orig_cps_est = ((narrow_sw / th) * 3 / 2).max(1) as u32;
+                            let promoted_ls = &para.line_segs[start..];
+                            let mut normal_spans: Vec<u32> = Vec::new();
+                            for (j, ls) in promoted_ls.iter().enumerate() {
+                                let ts_end = promoted_ls.get(j + 1)
+                                    .map(|s| s.text_start)
+                                    .unwrap_or(total_utf16);
+                                let span = ts_end.saturating_sub(ls.text_start);
+                                if span > 0 && span <= orig_cps_est {
+                                    normal_spans.push(span);
+                                }
+                            }
+                            if !normal_spans.is_empty() {
+                                normal_spans.sort_unstable();
+                                let orig_ref = normal_spans[normal_spans.len() * 9 / 10] as i32;
+                                let scaled_cps = (orig_ref * body_w / narrow_sw).max(1);
+                                para.line_segs[start].promoted_cps = scaled_cps;
+                            }
+                        }
+
+                        if start + 1 < para.line_segs.len() {
+                            para.line_segs.truncate(start + 1);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     Ok(paragraphs)
@@ -1681,7 +2168,6 @@ pub fn parse_hwp3(data: &[u8]) -> Result<Document, Hwp3Error> {
     let paper_width_hu = doc_info.paper_width as i32 * 4;
     let column_width_hu = (paper_width_hu - body_left_hu - body_right_hu).max(1);
     let mut paragraphs = parse_paragraph_list(&mut body_cursor, &mut doc_char_shapes, &mut doc_para_shapes, &mut doc_border_fills, &mut pic_name_to_id, body_left_hu, column_width_hu)?;
-
 
     // 추가 정보 블록 읽기 (압축 해제된 스트림의 끝 부분)
     let mut additional_info_blocks = Vec::new();

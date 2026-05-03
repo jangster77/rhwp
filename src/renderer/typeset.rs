@@ -489,15 +489,22 @@ impl TypesetEngine {
                 if (para_cs == st.wrap_around_cs && para_sw == st.wrap_around_sw)
                     || (any_seg_matches && (is_empty_para || st.wrap_around_any_seg))
                     || sw0_match {
-                    // 어울림 문단: 표 옆에 기록 + height 소비 없음
-                    st.current_column_wrap_around_paras.push(
-                        crate::renderer::pagination::WrapAroundPara {
-                            para_index: para_idx,
-                            table_para_index: st.wrap_around_table_para,
-                            has_text: !is_empty_para,
-                        }
-                    );
-                    continue;
+                    // wrap_precomputed=true: 파서가 LineSeg cs/sw를 사전 계산한 문단.
+                    // layout_wrap_around_paras는 vertical_pos 기반 y 계산을 하므로
+                    // vertical_pos=0인 사전 계산 문단에서 잘못된 y가 나온다.
+                    // FullParagraph path에서 LineSeg cs/sw로 직접 처리하도록 흡수 스킵.
+                    if !para.wrap_precomputed {
+                        // 어울림 문단: 표 옆에 기록 + height 소비 없음
+                        st.current_column_wrap_around_paras.push(
+                            crate::renderer::pagination::WrapAroundPara {
+                                para_index: para_idx,
+                                table_para_index: st.wrap_around_table_para,
+                                has_text: !is_empty_para,
+                            }
+                        );
+                        continue;
+                    }
+                    // pre-computed: fall through to normal FullParagraph rendering
                 } else {
                     // 매칭 실패 → wrap zone 종료, 정상 처리 진행
                     st.wrap_around_cs = -1;
@@ -707,14 +714,22 @@ impl TypesetEngine {
                             // layout y=1275px → pi=192 가 21페이지에 packing 되었다가
                             // overflow 로 잘림). pagination 측에서도 layout 과 동일하게
                             // 개체 높이를 current_height 에 누적.
+                            //
+                            // pushdown 보정: 이미지가 문단 내 텍스트 줄들과 겹치는 구간은
+                            // 이미 line_seg lh 로 current_height 에 반영됨. 실제 필요 추가
+                            // 높이 = max(0, vert_offset + pic_h - para_lineseg_h) + margin_bottom.
                             use crate::model::shape::{TextWrap, VertRelTo};
+                            let para_lineseg_h: f64 = para.line_segs.iter()
+                                .map(|s| hwpunit_to_px(s.line_height + s.line_spacing, self.dpi))
+                                .sum();
                             let pushdown_h: Option<f64> = match ctrl {
                                 Control::Picture(pic) if !pic.common.treat_as_char
                                     && matches!(pic.common.text_wrap, TextWrap::TopAndBottom)
                                     && matches!(pic.common.vert_rel_to, VertRelTo::Para) => {
                                     let h = hwpunit_to_px(pic.common.height as i32, self.dpi);
                                     let mb = hwpunit_to_px(pic.common.margin.bottom as i32, self.dpi);
-                                    Some(h + mb)
+                                    let v_off = hwpunit_to_px(pic.common.vertical_offset as i32, self.dpi);
+                                    Some((v_off + h - para_lineseg_h).max(0.0) + mb)
                                 }
                                 Control::Shape(s) if !s.common().treat_as_char
                                     && matches!(s.common().text_wrap, TextWrap::TopAndBottom)
@@ -722,7 +737,8 @@ impl TypesetEngine {
                                     let cm = s.common();
                                     let h = hwpunit_to_px(cm.height as i32, self.dpi);
                                     let mb = hwpunit_to_px(cm.margin.bottom as i32, self.dpi);
-                                    Some(h + mb)
+                                    let v_off = hwpunit_to_px(cm.vertical_offset as i32, self.dpi);
+                                    Some((v_off + h - para_lineseg_h).max(0.0) + mb)
                                 }
                                 _ => None,
                             };
