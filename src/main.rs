@@ -948,6 +948,27 @@ fn show_info(args: &[String]) {
     let total_paras: usize = document.sections.iter().map(|s| s.paragraphs.len()).sum();
     println!("총 문단 수: {}", total_paras);
 
+    // [Task #554] HWP3 → HWP5 변환본 식별 휴리스틱 정보
+    // 한컴이 HWP3 → HWP5 변환 시 ParaShape/CharShape 를 거의 재사용하지 않고 매우 적은
+    // 수만 생성한다. 직접 작성본은 작성자가 다양한 스타일을 사용하므로 비율이 paragraph
+    // 와 비슷하거나 더 높다. 임계값 < 0.05 / < 0.15 로 27 fixture 100% 분류 (Stage 1).
+    let ps_count = document.doc_info.para_shapes.len();
+    let cs_count = document.doc_info.char_shapes.len();
+    if total_paras > 0 {
+        let ps_ratio = ps_count as f64 / total_paras as f64;
+        let cs_ratio = cs_count as f64 / total_paras as f64;
+        let origin = if total_paras > 50 && ps_ratio < 0.05 && cs_ratio < 0.15 {
+            "HWP3 변환본 추정 (margin_bottom -1600 HU 보정 적용)"
+        } else if total_paras <= 50 {
+            "판정 불가 (문단 수 ≤ 50, 비율 왜곡 회피)"
+        } else {
+            "한컴 한글 직접 작성 추정"
+        };
+        println!("ParaShape: {} (PS/문단 = {:.3})", ps_count, ps_ratio);
+        println!("CharShape: {} (CS/문단 = {:.3})", cs_count, cs_ratio);
+        println!("Origin 추정: {}", origin);
+    }
+
     // BinData 정보
     if !document.doc_info.bin_data_list.is_empty() {
         println!("BinData:");
