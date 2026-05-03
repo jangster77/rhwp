@@ -490,12 +490,13 @@ impl LayoutEngine {
             };
         }
 
-        // 용지 기준 이미지: body clip 바깥에 배치 (배경 이미지 등)
+        tree.root.children.push(body_node);
+
+        // 용지 기준 이미지: body 위에 배치 (floating shape은 텍스트 위에 렌더링해야 함)
+        // SVG 문서 순서상 나중에 그려진 요소가 위에 표시되므로 body_node 이후에 추가.
         for img_node in paper_images {
             tree.root.children.push(img_node);
         }
-
-        tree.root.children.push(body_node);
 
         // 각주 영역
         self.build_footnote_area(&mut tree, page_content, paragraphs, footnote_shape, styles, layout);
@@ -1351,6 +1352,14 @@ impl LayoutEngine {
         let mut fix_table_visual_h: f64 = 0.0;
         let mut fix_overlay_active = false;
 
+        // HWP3 wrap_precomputed: Square-wrap 그림 어울림 top/bottom y 추적.
+        // wrap_around_paras(HWP5)와 달리 HWP3는 어울림 구역을 별도 목록으로 관리하지 않으므로
+        // Shape 처리 시 직접 그림 top/bottom y를 계산하여 y_offset을 보정.
+        let mut hwp3_pic_top_y: f64 = 0.0;
+        let mut hwp3_pic_bottom_y: f64 = 0.0;
+        let mut hwp3_narrow_zone_started: bool = false;
+        let mut hwp3_narrow_zone_seen: bool = false;
+
         // vpos 보정을 위한 페이지 기준 vpos 계산
         // 페이지 첫 항목의 vpos를 기준점으로 삼아 모든 페이지에서 vpos 보정 적용
         let mut vpos_page_base: Option<i32> = col_content.items.first().and_then(|item| {
@@ -1546,6 +1555,62 @@ impl LayoutEngine {
                         y_offset = table_bottom;
                     }
                     fix_overlay_active = false;
+                }
+            }
+
+            // HWP3 wrap_precomputed: Square-wrap Shape 검출 (wrap_around_paras가 없는 경우)
+            if col_content.wrap_around_paras.is_empty() {
+                if let PageItem::Shape { para_index, control_index } = item {
+                    if let Some(para) = paragraphs.get(*para_index) {
+                        let pic_cm = para.controls.get(*control_index).and_then(|c| match c {
+                            Control::Picture(p) if !p.common.treat_as_char
+                                && matches!(p.common.text_wrap, crate::model::shape::TextWrap::Square) => Some(&p.common),
+                            _ => None,
+                        });
+                        if let Some(cm) = pic_cm {
+                            let pic_h_px = hwpunit_to_px(cm.height as i32, self.dpi);
+                            let top_y = if matches!(cm.vert_rel_to, crate::model::shape::VertRelTo::Para) {
+                                para_start_y.get(para_index).copied().unwrap_or(y_offset)
+                                    + hwpunit_to_px(cm.vertical_offset as i32, self.dpi)
+                            } else {
+                                hwpunit_to_px(cm.vertical_offset as i32, self.dpi)
+                            };
+                            let bottom_y = top_y + pic_h_px;
+                            hwp3_pic_top_y = top_y;
+                            hwp3_pic_bottom_y = bottom_y;
+                            hwp3_narrow_zone_started = false;
+                            hwp3_narrow_zone_seen = false;
+                        }
+                    }
+                }
+            }
+            // HWP3 wrap_precomputed: narrow zone 시작/종료에 따른 y_offset 보정
+            if hwp3_pic_bottom_y > 0.0 {
+                if let PageItem::FullParagraph { para_index } | PageItem::PartialParagraph { para_index, .. } = item {
+                    if let Some(para) = paragraphs.get(*para_index) {
+                        let is_narrow = para.wrap_precomputed
+                            && para.line_segs.first().map(|ls| ls.column_start > 0).unwrap_or(false);
+                        if is_narrow {
+                            if !hwp3_narrow_zone_started {
+                                // 첫 번째 narrow zone 문단: 그림 상단으로 밀기
+                                if y_offset < hwp3_pic_top_y {
+                                    y_offset = hwp3_pic_top_y;
+                                }
+                                hwp3_narrow_zone_started = true;
+                            }
+                            hwp3_narrow_zone_seen = true;
+                        } else if hwp3_narrow_zone_seen {
+                            // narrow zone 종료 후 상태 초기화.
+                            // HWP3에서 그림은 텍스트 위에 float되므로 full-width 문단을 그림 하단으로
+                            // 밀지 않는다. narrow zone이 그림 하단보다 일찍 끝나면 그 이후 full-width
+                            // 문단은 자연 위치에서 시작하고, 겹치는 영역은 그림이 텍스트 위에 그려진다.
+                            hwp3_pic_top_y = 0.0;
+                            hwp3_pic_bottom_y = 0.0;
+                            hwp3_narrow_zone_started = false;
+                            hwp3_narrow_zone_seen = false;
+                        }
+                        // narrow zone이 없는 경우(hwp3_narrow_zone_seen=false): push 없음.
+                    }
                 }
             }
 

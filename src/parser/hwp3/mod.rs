@@ -173,11 +173,12 @@ pub(crate) fn parse_paragraph_list(
     pic_name_to_id: &mut std::collections::HashMap<String, u16>,
     body_left_hu: i32,
     column_width_hu: i32,
+    body_top_pgy: u16,
 ) -> Result<Vec<crate::model::paragraph::Paragraph>, Hwp3Error> {
     use crate::model::paragraph::{Paragraph, LineSeg, CharShapeRef};
     use byteorder::{LittleEndian, ReadBytesExt};
     use std::io::Read;
-    
+
     let mut paragraphs = Vec::new();
     let mut current_para_shape_id = 0u16;
     let mut prev_para_had_flags_break: bool = false;
@@ -185,6 +186,8 @@ pub(crate) fn parse_paragraph_list(
     // Square wrap 그림 어울림 구역: (column_start, segment_width, pgy_start, pgy_end)
     // 떠다니는 Square wrap 그림 문단을 만나면 갱신, pgy가 pgy_end를 넘으면 초기화.
     let mut active_wrap_zone: Option<(i32, i32, u16, u16)> = None;
+    // 비-WPC 문단의 body 기준 pgy 추정값: WPC 문단 linfo.pgy로 동기화, non-WPC는 누적.
+    let mut est_body_pgy: u16 = 0;
 
     loop {
         let para_start_pos = body_cursor.position();
@@ -709,14 +712,14 @@ pub(crate) fn parse_paragraph_list(
 
                                     // 중복된 스팬 계산 제거됨
                                     
-                                    let nested = parse_paragraph_list(body_cursor, doc_char_shapes, doc_para_shapes, doc_border_fills, pic_name_to_id, body_left_hu, column_width_hu)?;
+                                    let nested = parse_paragraph_list(body_cursor, doc_char_shapes, doc_para_shapes, doc_border_fills, pic_name_to_id, body_left_hu, column_width_hu, 0)?;
                                     cell.paragraphs = nested;
                                     cells.push(cell);
                                 }
                                 table.cells = cells;
                                 table.rebuild_grid();
                                 table.row_sizes = (0..table.row_count).map(|r| table.cells.iter().filter(|c| c.row == r).count() as i16).collect();
-                                let caption_paras = parse_paragraph_list(body_cursor, doc_char_shapes, doc_para_shapes, doc_border_fills, pic_name_to_id, body_left_hu, column_width_hu)?;
+                                let caption_paras = parse_paragraph_list(body_cursor, doc_char_shapes, doc_para_shapes, doc_border_fills, pic_name_to_id, body_left_hu, column_width_hu, 0)?;
                                 let caption_direction = match caption_pos {
                                     0 => crate::model::shape::CaptionDirection::Bottom,
                                     1 => crate::model::shape::CaptionDirection::Top,
@@ -860,7 +863,7 @@ pub(crate) fn parse_paragraph_list(
                             
                             let caption_pos = (&info_buf[70..72]).read_u16::<LittleEndian>().unwrap_or(0);
                             let caption_width = (&info_buf[46..48]).read_u16::<LittleEndian>().unwrap_or(0) as u32 * 4;
-                            let caption_paras = parse_paragraph_list(body_cursor, doc_char_shapes, doc_para_shapes, doc_border_fills, pic_name_to_id, body_left_hu, column_width_hu)?;
+                            let caption_paras = parse_paragraph_list(body_cursor, doc_char_shapes, doc_para_shapes, doc_border_fills, pic_name_to_id, body_left_hu, column_width_hu, 0)?;
                             let caption_direction = match caption_pos {
                                 0 => crate::model::shape::CaptionDirection::Bottom,
                                 1 => crate::model::shape::CaptionDirection::Top,
@@ -991,15 +994,15 @@ pub(crate) fn parse_paragraph_list(
                         } else if ch == 15 { // 숨은 설명
                             info_buf.resize(8, 0);
                             if let Err(_) = body_cursor.read_exact(&mut info_buf) { break; }
-                            nested_paragraphs = parse_paragraph_list(body_cursor, doc_char_shapes, doc_para_shapes, doc_border_fills, pic_name_to_id, body_left_hu, column_width_hu)?;
+                            nested_paragraphs = parse_paragraph_list(body_cursor, doc_char_shapes, doc_para_shapes, doc_border_fills, pic_name_to_id, body_left_hu, column_width_hu, 0)?;
                         } else if ch == 16 { // 머리말/꼬리말
                             info_buf.resize(10, 0);
                             if let Err(_) = body_cursor.read_exact(&mut info_buf) { break; }
-                            nested_paragraphs = parse_paragraph_list(body_cursor, doc_char_shapes, doc_para_shapes, doc_border_fills, pic_name_to_id, body_left_hu, column_width_hu)?;
+                            nested_paragraphs = parse_paragraph_list(body_cursor, doc_char_shapes, doc_para_shapes, doc_border_fills, pic_name_to_id, body_left_hu, column_width_hu, 0)?;
                         } else if ch == 17 { // 각주/미주
                             info_buf.resize(14, 0);
                             if let Err(_) = body_cursor.read_exact(&mut info_buf) { break; }
-                            nested_paragraphs = parse_paragraph_list(body_cursor, doc_char_shapes, doc_para_shapes, doc_border_fills, pic_name_to_id, body_left_hu, column_width_hu)?;
+                            nested_paragraphs = parse_paragraph_list(body_cursor, doc_char_shapes, doc_para_shapes, doc_border_fills, pic_name_to_id, body_left_hu, column_width_hu, 0)?;
                         } else if ch == 29 { // 상호 참조
                             if header_val1 < 1000000 {
                                 info_buf.resize(header_val1 as usize, 0);
@@ -1300,10 +1303,10 @@ pub(crate) fn parse_paragraph_list(
                     let v_off_hunit = (pic.common.vertical_offset / 4) as u16;
                     let h_hunit = (pic.common.height / 4) as u16;
                     // Para-relative: v_off는 문단 기준 상대 좌표 → first_pgy_here에 더함
-                    // Paper/Page-relative: v_off는 용지 기준 절대 좌표 → pgy와 직접 비교
+                    // Paper/Page-relative: v_off는 용지 기준 절대 좌표 → body_top_pgy를 빼서 body 기준으로 변환
                     let pgy_start = match pic.common.vert_rel_to {
                         crate::model::shape::VertRelTo::Para => first_pgy_here.saturating_add(v_off_hunit),
-                        _ => v_off_hunit,
+                        _ => v_off_hunit.saturating_sub(body_top_pgy),
                     };
                     let pgy_end = pgy_start.saturating_add(h_hunit);
                     Some((cs, sw, pgy_start, pgy_end))
@@ -1315,28 +1318,38 @@ pub(crate) fn parse_paragraph_list(
             }
         });
 
-        // 페이지 경계 여부 (pgy 감소 = 새 페이지)
+        // 페이지 경계 여부 (pgy 감소 = 새 페이지): WPC 문단에서만 감지 가능.
         let is_page_break = prev_last_pgy > 0 && first_pgy_here > 0 && first_pgy_here < prev_last_pgy;
+        if is_page_break {
+            est_body_pgy = 0;
+            active_wrap_zone = None;
+        }
 
-        // 현재 문단에 적용할 어울림 구역:
-        // 자신이 그림 호스트면 pic_wrap_zone, 아니면 이전 문단에서 이어진 active_wrap_zone.
-        let current_zone: Option<(i32, i32, u16, u16)> =
-            pic_wrap_zone.or(if is_page_break { None } else { active_wrap_zone });
-
-        // active_wrap_zone 갱신
-        if let Some(new_zone) = pic_wrap_zone {
-            active_wrap_zone = Some(new_zone);
-        } else if let Some((_, _, _, pgy_end)) = active_wrap_zone {
-            if is_page_break || last_pgy_here >= pgy_end {
+        // 어울림 구역 만료 확인: 이 문단의 시작이 pgy_end를 지났으면 구역 해제.
+        // 문단 끝이 아닌 시작으로 판단 — 일부 줄이 구역 안에 있으면 구역 유지.
+        // 비-WPC 문단(pgy=0)은 est_body_pgy로 추정.
+        if let Some((_, _, _, pgy_end)) = active_wrap_zone {
+            let effective_start_pgy = if first_pgy_here > 0 { first_pgy_here } else { est_body_pgy };
+            if effective_start_pgy >= pgy_end {
                 active_wrap_zone = None;
             }
         }
 
+        // 현재 문단에 적용할 어울림 구역:
+        // 자신이 그림 호스트면 pic_wrap_zone, 아니면 만료 검사 통과한 active_wrap_zone.
+        let current_zone: Option<(i32, i32, u16, u16)> = pic_wrap_zone.or(active_wrap_zone);
+
+        // active_wrap_zone 갱신: 새 그림 발견 시 등록
+        if let Some(new_zone) = pic_wrap_zone {
+            active_wrap_zone = Some(new_zone);
+        }
+
         let mut line_segs = Vec::with_capacity(line_infos.len().max(1));
         if line_infos.is_empty() {
-            // line_infos 없음: first_pgy_here로 구역 판정
+            // line_infos 없음: 유효한 pgy가 있으면 그것을, 없으면 est_body_pgy로 구역 판정
             let cs_sw = current_zone.and_then(|(cs, sw, pgy_start, pgy_end)| {
-                if first_pgy_here >= pgy_start && first_pgy_here < pgy_end {
+                let effective_pgy = if first_pgy_here > 0 { first_pgy_here } else { est_body_pgy };
+                if effective_pgy >= pgy_start && effective_pgy < pgy_end {
                     Some((cs, sw))
                 } else {
                     None
@@ -1406,8 +1419,10 @@ pub(crate) fn parse_paragraph_list(
                         Some((cs_sx, sw_sx))
                     } else {
                         // sx=0: pgy zone 체크 후 geometry 폴백.
+                        // 비-WPC 문단(pgy=0)은 est_body_pgy로 대체하여 zone 판정.
+                        let effective_pgy = if linfo.pgy > 0 { linfo.pgy } else { est_body_pgy };
                         let in_zone = pic_wrap_zone.is_some()
-                            || (linfo.pgy >= pgy_start && linfo.pgy < pgy_end);
+                            || (effective_pgy >= pgy_start && effective_pgy < pgy_end);
                         if !in_zone { return None; }
                         // geometry 폴백: 앵커 문단 & 비앵커 문단 모두 동일 처리.
                         Some((cs, sw))
@@ -1442,9 +1457,11 @@ pub(crate) fn parse_paragraph_list(
                     0
                 };
 
-                // HWP3 앵커 문단 첫 줄: 한컴뷰어는 binary cs를 무시하고 본문 왼쪽(cs=0)에서 시작.
-                // sw=0으로 layout.rs의 layout_wrap_around_paras guard(wrap_cs>0||wrap_sw>0)도 우회.
-                let (final_cs, final_sw) = if pic_wrap_zone.is_some() && line_segs.is_empty() {
+                // HWP3 앵커 문단 첫 줄 특수 처리.
+                // binary sx=0(full-width)인 첫 줄: HWP97이 이 줄을 본문 왼쪽(cs=0)에 배치했음.
+                //   sw=0으로 layout.rs의 layout_wrap_around_paras guard(wrap_cs>0||wrap_sw>0)도 우회.
+                // binary sx>0(narrow)인 첫 줄: binary 신뢰 — 이미 이미지 옆에 배치됨.
+                let (final_cs, final_sw) = if pic_wrap_zone.is_some() && line_segs.is_empty() && linfo.sx == 0 {
                     (0i32, 0i32)
                 } else {
                     (line_cs_sw.map(|(cs, _)| cs).unwrap_or(0), line_cs_sw.map(|(_, sw)| sw).unwrap_or(0))
@@ -1464,15 +1481,29 @@ pub(crate) fn parse_paragraph_list(
             }
         }
         let char_count = para.text.chars().count();
+        // non-WPC 문단(all sx=0, pgy=0)이 어울림 구역 안에 있고 1개 linfo일 때:
+        // 이진 레이아웃은 full-width 기준이지만, 실제 렌더는 narrow zone 안에서 reflow해야 함.
+        let needs_wrap_reflow = !line_infos.is_empty()
+            && line_infos.iter().all(|l| l.sx == 0 && l.pgy == 0)
+            && current_zone.is_some()
+            && line_segs.len() == 1
+            && line_segs[0].segment_width > 0
+            && !para.text.contains('\n')
+            && char_count > 40;
         // line_infos가 있으면 한글97 저장 레이아웃을 신뢰하여 reflow 생략.
-        // line_infos가 없을 때만 폴백으로 글자 수 기반 reflow를 수행한다.
-        if line_infos.is_empty() && line_segs.len() == 1 && !para.text.contains('\n') && char_count > 40 {
+        // line_infos가 없을 때, 또는 비-WPC 문단이 어울림 구역 안에 있을 때만 reflow.
+        if (line_infos.is_empty() || needs_wrap_reflow) && line_segs.len() == 1 && !para.text.contains('\n') && char_count > 40 {
             let base_seg = line_segs.remove(0);
             let mut reflowed_segs = Vec::new();
             let mut last_break_utf16 = 0;
             let mut current_utf16 = 0;
-            
-            let chunk_max = 38;
+
+            // wrap zone 내 reflow: 칼럼 너비 비율로 chunk_max 조정.
+            let chunk_max = if needs_wrap_reflow && base_seg.text_height > 0 {
+                (base_seg.segment_width / base_seg.text_height).max(10).min(50) as usize
+            } else {
+                38
+            };
             let mut current_chunk_len = 0;
             let mut last_space_idx = None;
             let mut last_space_utf16 = None;
@@ -1584,6 +1615,19 @@ pub(crate) fn parse_paragraph_list(
             prev_last_pgy = last_pgy;
         } else if last_pgy > 0 {
             prev_last_pgy = last_pgy;
+        }
+
+        // est_body_pgy 갱신: WPC 문단은 마지막 linfo pgy+lh로 동기화, non-WPC는 line_segs 높이 누적.
+        {
+            let last_lh_pgy = line_infos.last().map(|l| l.line_height).unwrap_or(0);
+            if last_pgy_here > 0 {
+                est_body_pgy = last_pgy_here.saturating_add(last_lh_pgy);
+            } else {
+                let para_h_pgy: u16 = para.line_segs.iter()
+                    .map(|s| (s.line_height as u32 / 4).min(u16::MAX as u32) as u16)
+                    .sum::<u16>();
+                est_body_pgy = est_body_pgy.saturating_add(para_h_pgy);
+            }
         }
 
         // para_info.flags bit 1 = 명시적 페이지나눔: 이전 문단에 이 플래그가 있으면
@@ -1897,9 +1941,12 @@ pub(crate) fn parse_paragraph_list(
             // wrap_precomputed 문단
             if next_is_primary {
                 let own_lh: i32 = para.line_segs.iter().map(|s| s.line_height).sum();
-                body_w = para.line_segs.first()
+                // 앵커 문단 첫 줄은 anchor override로 cs=0/sw=0이므로 cs+sw>0인 첫 줄 사용.
+                // 없으면 column_width_hu로 폴백.
+                body_w = para.line_segs.iter()
+                    .find(|ls| ls.column_start + ls.segment_width > 0)
                     .map(|ls| ls.column_start + ls.segment_width)
-                    .unwrap_or(0);
+                    .unwrap_or(column_width_hu);
                 is_pattern_b = anchor_is_non_wpc;
                 let budget = if anchor_is_non_wpc {
                     anchor_total_img_h.unwrap_or(own_lh)
@@ -1980,6 +2027,16 @@ pub(crate) fn parse_paragraph_list(
                     } // end !has_binary_fullwidth
                 } else {
                     // 패턴A: budget 초과 narrow ls → full-width 승격
+                    //
+                    // binary가 모든 줄을 narrow(cs>0)로 명시하면 HWP97이 이 문단 전체를
+                    // wrap zone 안에 배치했음을 신뢰하여 promotion/truncation 생략.
+                    let has_binary_allnarrow = !para.line_segs.is_empty()
+                        && para.line_segs.iter().all(|ls| ls.column_start > 0);
+                    if has_binary_allnarrow {
+                        for ls in &para.line_segs {
+                            *remaining -= ls.line_height;
+                        }
+                    } else {
                     let narrow_sw = para.line_segs.first()
                         .map(|ls| ls.segment_width)
                         .unwrap_or(body_w);
@@ -2035,6 +2092,7 @@ pub(crate) fn parse_paragraph_list(
                             para.line_segs.truncate(start + 1);
                         }
                     }
+                    } // end !has_binary_allnarrow
                 }
             }
         }
@@ -2167,7 +2225,10 @@ pub fn parse_hwp3(data: &[u8]) -> Result<Document, Hwp3Error> {
     let body_right_hu = doc_info.right_margin as i32 * 4;
     let paper_width_hu = doc_info.paper_width as i32 * 4;
     let column_width_hu = (paper_width_hu - body_left_hu - body_right_hu).max(1);
-    let mut paragraphs = parse_paragraph_list(&mut body_cursor, &mut doc_char_shapes, &mut doc_para_shapes, &mut doc_border_fills, &mut pic_name_to_id, body_left_hu, column_width_hu)?;
+    // 용지 기준 좌표를 body 기준으로 변환하는 데 필요한 body 상단 pgy 오프셋.
+    // body_top_hu = (header_length + top_margin) * 4 HWPUNIT, /4 = pgy 단위.
+    let body_top_pgy = (doc_info.header_length as u32 + doc_info.top_margin as u32) as u16;
+    let mut paragraphs = parse_paragraph_list(&mut body_cursor, &mut doc_char_shapes, &mut doc_para_shapes, &mut doc_border_fills, &mut pic_name_to_id, body_left_hu, column_width_hu, body_top_pgy)?;
 
     // 추가 정보 블록 읽기 (압축 해제된 스트림의 끝 부분)
     let mut additional_info_blocks = Vec::new();

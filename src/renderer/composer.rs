@@ -289,7 +289,15 @@ fn compose_lines(para: &Paragraph) -> Vec<ComposedLine> {
     // HWP3 wrap_precomputed: 대형 span 분리를 위한 기준 글자 수(정상 스팬 중간값).
     // HWP3는 글자 모양이 바뀌지 않는 연속 줄을 단일 LineSeg로 저장하므로
     // span이 정상 줄당 글자 수의 1.5배를 초과하면 여러 ComposedLine으로 분리한다.
-    let wrap_ref_span: usize = if para.wrap_precomputed {
+    //
+    // Sub-split은 그림 anchor 문단(non-TAC picture 보유)에만 적용한다.
+    // 그림 없는 narrow zone 텍스트 문단은 각 LineSeg가 이미 한 시각 줄이므로
+    // sub-split이 불필요하며, Latin 텍스트의 경우 cps_est(CJK 기준)가 과소평가되어
+    // 단일 줄을 잘못 분할하면 양쪽정렬 시 단어 간격이 비정상적으로 벌어진다.
+    let has_non_tac_picture = para.controls.iter().any(|c| {
+        matches!(c, Control::Picture(p) if !p.common.treat_as_char)
+    });
+    let wrap_ref_span: usize = if para.wrap_precomputed && has_non_tac_picture {
         let total_utf16 = if para.char_count > 0 {
             para.char_count
         } else {
@@ -353,10 +361,11 @@ fn compose_lines(para: &Paragraph) -> Vec<ComposedLine> {
         let line_seg = &para.line_segs[line_idx];
 
         // wrap zone 초과 여부: 이 LineSeg가 그림 wrap zone 아래에 위치하는지 판정.
-        // 초과 시 paragraph_layout의 sw < col_w-200 조건이 불충족되어 전체 폭으로 렌더링됨.
+        // HWP97 기준: 줄 시작(accumulated_lh)이 wrap zone 높이 이상이면 아래 위치.
+        // 줄 끝이 초과하더라도 시작이 zone 내부이면 여전히 narrow zone으로 처리.
         let is_below_wrap = wrap_zone_h > 0
             && full_body_w > 0
-            && accumulated_lh + line_seg.line_height > wrap_zone_h;
+            && accumulated_lh >= wrap_zone_h;
         let effective_cs = if is_below_wrap { 0 } else { line_seg.column_start };
         let effective_sw = if is_below_wrap { full_body_w } else { line_seg.segment_width };
 
