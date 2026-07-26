@@ -1,0 +1,86 @@
+name: Test pull_request Cancel Stale PR Runs
+
+# Fork 격리 검증용: 같은 저장소 head PR에서 Update branch(synchronize) 뒤 이전 SHA run을
+# force-cancel한다. PR source checkout·shell·PR 제공 script 실행은 하지 않는다.
+on:
+  pull_request:
+    branches: [test/ci-pull-request-base-20260726]
+    types: [synchronize]
+
+permissions:
+  actions: write
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: test-pull-request-cancel-stale-runs-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  cancel-stale-runs:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: Force-cancel older pull-request runs for this PR
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const pullNumber = context.payload.pull_request.number;
+            const activeStatuses = new Set([
+              'queued', 'in_progress', 'pending', 'requested', 'waiting',
+            ]);
+
+            async function getLivePull() {
+              const { data } = await github.rest.pulls.get({
+                owner,
+                repo,
+                pull_number: pullNumber,
+              });
+              return data;
+            }
+
+            const pull = await getLivePull();
+            if (pull.state !== 'open') {
+              core.info(`PR #${pullNumber} is ${pull.state}; nothing to cancel.`);
+              return;
+            }
+
+            const runs = await github.paginate(
+              github.rest.actions.listWorkflowRunsForRepo,
+              {
+                owner,
+                repo,
+                branch: pull.head.ref,
+                event: 'pull_request',
+                per_page: 100,
+              },
+            );
+            const staleRuns = runs.filter((run) => (
+              run.head_sha !== pull.head.sha
+              && activeStatuses.has(run.status)
+              && (run.pull_requests || []).some((runPull) => runPull.number === pullNumber)
+            ));
+
+            let cancelled = 0;
+            for (const run of staleRuns) {
+              const livePull = await getLivePull();
+              if (livePull.state !== 'open') {
+                core.info(`PR #${pullNumber} is ${livePull.state}; stop cancelling.`);
+                break;
+              }
+              if (run.head_sha === livePull.head.sha) {
+                core.info(`Keep current run ${run.id} (${run.name}, ${run.head_sha}).`);
+                continue;
+              }
+              await github.request(
+                'POST /repos/{owner}/{repo}/actions/runs/{run_id}/force-cancel',
+                { owner, repo, run_id: run.id },
+              );
+              cancelled += 1;
+              core.info(`Force-cancelled stale run ${run.id} (${run.name}, ${run.head_sha}).`);
+            }
+
+            core.info(
+              `Current head ${pull.head.sha}; force-cancelled ${cancelled} stale run(s).`,
+            );

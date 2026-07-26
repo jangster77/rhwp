@@ -2,7 +2,7 @@ name: Render Diff
 
 on:
   pull_request:
-    branches: [main, devel]
+    branches: [main, devel, test/ci-pull-request-base-20260726]
     paths:
       - 'Cargo.toml'
       - 'Cargo.lock'

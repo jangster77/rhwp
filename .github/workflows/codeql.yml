@@ -18,7 +18,7 @@ on:
       - '.github/dependabot.yml'
       - 'rhwp-logo.*'
   pull_request:
-    branches: [main, devel]
+    branches: [main, devel, test/ci-pull-request-base-20260726]
     paths-ignore:
       - 'docs/**'
       - 'samples/**'
