@@ -1,6 +1,6 @@
 name: Test Cancel Stale PR Runs
 
-# Fork 격리 검증용: update branch(synchronize)가 만든 새 head에서 같은 PR의 이전 SHA run만 취소한다.
+# Fork 격리 검증용: update branch(synchronize)가 만든 새 head에서 같은 PR의 이전 SHA run을 force-cancel한다.
 # pull_request_target은 default-branch workflow를 사용하고 write token을 얻으므로, PR head checkout·script 실행은 금지한다.
 on:
   pull_request_target:
@@ -15,7 +15,7 @@ jobs:
     if: github.event.pull_request.base.ref == 'test/ci-concurrency-base-20260726'
     runs-on: ubuntu-latest
     steps:
-      - name: Cancel older pull-request runs for this head branch
+      - name: Force-cancel older pull-request runs for this head branch
         uses: actions/github-script@v9
         with:
           script: |
@@ -39,11 +39,14 @@ jobs:
               (run) => run.head_sha !== currentSha && activeStatuses.has(run.status),
             );
             for (const run of staleRuns) {
-              await github.rest.actions.cancelWorkflowRun({
+              await github.request(
+                'POST /repos/{owner}/{repo}/actions/runs/{run_id}/force-cancel',
+                {
                 owner,
                 repo,
                 run_id: run.id,
-              });
-              core.info(`Cancelled stale run ${run.id} (${run.name}, ${run.head_sha}).`);
+                },
+              );
+              core.info(`Force-cancelled stale run ${run.id} (${run.name}, ${run.head_sha}).`);
             }
-            core.info(`Current head ${currentSha}; cancelled ${staleRuns.length} stale run(s).`);
+            core.info(`Current head ${currentSha}; force-cancelled ${staleRuns.length} stale run(s).`);
