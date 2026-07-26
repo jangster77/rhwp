@@ -36,11 +36,11 @@ on:
     - cron: '0 6 * * 1'  # 매주 월요일 06:00 UTC
   workflow_dispatch:
 
-# [Task #1192 F] 같은 PR 에 새 push 가 오면 진행 중 run 을 취소해 중복 실행 제거.
-# cancel-in-progress 는 PR 이벤트에서만 활성화 — push/schedule(주간 cron) run 은 보존.
+# 같은 PR의 새 head는 이전 run을 취소한다. PR 번호는 update branch 전후에도 변하지 않으므로
+# fork branch·merge ref 표현에 의존하지 않는다. PR 밖의 run은 고유 run_id group으로 보존한다.
 concurrency:
-  group: codeql-${{ github.workflow }}-${{ github.head_ref || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.workflow }}-pr-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
   preflight:
