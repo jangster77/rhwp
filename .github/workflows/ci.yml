@@ -22,7 +22,8 @@ on:
       - '.github/dependabot.yml'
       - 'rhwp-logo.*'
   pull_request:
-    branches: [main, devel]
+    # test/ci-concurrency-base-20260726 는 fork 격리 검증 PR 전용이며 upstream에는 merge하지 않는다.
+    branches: [main, devel, test/ci-concurrency-base-20260726]
     paths-ignore:
       - 'docs/**'
       - 'samples/**'
